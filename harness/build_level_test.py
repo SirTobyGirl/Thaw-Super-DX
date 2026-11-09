@@ -102,13 +102,19 @@ def build_zone(src_dir, code, z, tex_mode="thug2", parts=("tex", "geom", "col", 
             print("all leaves -> group 1 texture 1 (texture file given)")
     elif tex_mode == "convert":
         _, t2 = T2.parse(open(f"{src_dir}/{code}.tex.ps2", "rb").read())
+        from thaw_sandbox.thug2_texrefs import resolve
+        refs = resolve(t2)  # header-only entries are references to textures defined elsewhere
         grey = struct.pack("<16I", *([0x80606060] * 16))  # placeholder palette, CT32, opaque grey
         new = []
         for x in t2:
             if x.mips:
                 mips = x.mips[:1] if os.environ.get("TEX_TOP_ONLY") else x.mips[:4]  # THAW uses at most 4 levels
                 new.append(TT.NewTexture(x.crc, x.width, x.height, x.psm, x.cpsm, x.clut, mips, group=x.group))
-            else:  # header-only entry: stand-in 8x8 grey so references resolve
+            elif x.crc in refs:  # header-only reference: copy the real pixels, keep this entry's group
+                r = refs[x.crc]
+                mips = r.mips[:1] if os.environ.get("TEX_TOP_ONLY") else r.mips[:4]
+                new.append(TT.NewTexture(x.crc, r.width, r.height, r.psm, r.cpsm, r.clut, mips, group=x.group))
+            else:  # unresolved: stand-in 8x8 grey so references resolve
                 if os.environ.get("PLACEHOLDER32"):
                     new.append(TT.NewTexture(x.crc, 32, 32, 0x14, 0, grey, [bytes(512)], group=x.group))
                 else:
@@ -183,7 +189,8 @@ def build_zone(src_dir, code, z, tex_mode="thug2", parts=("tex", "geom", "col", 
             geom = GM.mute_leaves(geom, lambda i: a_ <= i < b_)
             print(f"microcode runs only for leaves {a_}..{b_}")
         print(f"geometry: {st}")
-        print(f"textures: {len(new)} ({sum(1 for x in t2 if not x.mips)} placeholders), {len(tex)} bytes")
+        print(f"textures: {len(new)} ({sum(1 for x in t2 if not x.mips and x.crc not in refs)} grey placeholders, "
+              f"{len(refs)} references resolved), {len(tex)} bytes")
     elif tex_mode == "empty":
         tex = struct.pack("<HH4I", 6, 0x14, 0, 0, 0, 0)  # version 6 header with zero textures (experiment)
     else:

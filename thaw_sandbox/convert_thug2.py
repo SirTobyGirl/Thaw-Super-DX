@@ -1,14 +1,14 @@
 """Convert a THUG2 (PS2) .qb file into a THAW .qb file.
 
 Data statements become THAW data records (qb_data encoding); scripts become THAW script records whose
-body is the THUG2 token stream stored uncompressed (header A == B). Both games share the token set for
-script code. The 4-byte body header checksum's formula is unknown; converted scripts get crc32 of their
-code, which is unique per body.
+body is the THUG2 token stream, compressed with the game's own LZSS encoder (lzss.pack_body). Both games
+share the token set for script code. Storing scripts in any other way (raw when compressible, or as an
+all-literal stream) crashed the game in tests; the body header checksum is not checked.
 """
 import struct
 import zlib
 
-from thaw_sandbox import qb_data as QD, qb_file as F, thug2_qb as T2
+from thaw_sandbox import lzss, qb_data as QD, qb_file as F, thug2_qb as T2
 from thaw_sandbox.qb_parser import qbcrc
 
 
@@ -17,8 +17,9 @@ def _vtype(v) -> int:
 
 
 def script_body(code: bytes) -> bytes:
-    crc = zlib.crc32(code) & 0xFFFFFFFF
-    return struct.pack("<3I", crc, len(code), len(code)) + code
+    """Store like the original compiler (lzss.pack_body: real encoder, raw only if not smaller).
+    The header checksum is not checked by the game (verified in PCSX2), so crc32 of the code is used."""
+    return lzss.pack_body(zlib.crc32(code) & 0xFFFFFFFF, code)
 
 
 def convert(thug2_bytes: bytes, thaw_path: str) -> tuple[bytes, T2.QbFile]:

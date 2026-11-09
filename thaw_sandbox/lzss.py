@@ -5,7 +5,8 @@ If A == B the stream is stored raw. Otherwise it is LZSS:
   * flag byte, 8 items per flag, least significant bit first, bit 1 = literal byte
   * bit 0 = match: byte1 = low 8 bits of ring position, byte2 high nibble = bits 8..11 of
     the position, byte2 low nibble = length - 3
-  * ring buffer of 4096 bytes, write pointer starts at 4078, buffer starts zero filled
+  * ring buffer of 4096 bytes, write pointer starts at 4078, buffer pre-filled with spaces (0x20),
+    as in the encoder in the PC executable (180 scripts decode differently with a zero fill)
 Flag bytes can fall in the middle of a 4-byte hash, so do not scan compressed data for names.
 """
 import struct
@@ -16,7 +17,7 @@ START = 4078
 
 def decompress(stream: bytes, out_size: int) -> bytes:
     out = bytearray()
-    ring = bytearray(N)
+    ring = bytearray(b" " * N)  # the game's encoder pre-fills the ring with spaces
     rp = START
     i = 0
     while len(out) < out_size and i < len(stream):
@@ -175,7 +176,7 @@ def decompress_roots(stream: bytes, out_size: int) -> tuple[bytes, list[int]]:
     originates from (matches copy the root of the ring slot they read; -1 = untouched initial ring)."""
     out = bytearray()
     roots: list[int] = []
-    ring = bytearray(N)
+    ring = bytearray(b" " * N)  # the game's encoder pre-fills the ring with spaces
     ring_root = [-1] * N
     rp = START
     i = 0
@@ -229,3 +230,158 @@ def patch_code(body: bytes, new_code: bytes) -> bytes:
     if decompress(bytes(stream), a) != new_code:
         raise ValueError("edit would change other bytes through shared literals")
     return body[:12] + bytes(stream) + body[12 + b:]
+
+
+# ---------------------------------------------------------------- encoder (port of Okumura's lzss.c)
+F_MAX = 18
+THRESHOLD = 2
+NIL = N
+
+
+def compress(data: bytes) -> bytes:
+    """LZSS-compress exactly like Haruhiko Okumura's lzss.c (binary-tree match finder), which the game's
+    encoder follows: N=4096, F=18, THRESHOLD=2, ring pre-filled with spaces, r starts at N-F."""
+    text = bytearray(b" " * (N + F_MAX - 1))
+    lson = [NIL] * (N + 1)
+    rson = [NIL] * (N + 257)
+    dad = [NIL] * (N + 1)
+    st = {"pos": 0, "len": 0}
+
+    def insert(r):
+        cmp = 1
+        key = r
+        p = N + 1 + text[key]
+        rson[r] = lson[r] = NIL
+        st["len"] = 0
+        while True:
+            if cmp >= 0:
+                if rson[p] != NIL:
+                    p = rson[p]
+                else:
+                    rson[p] = r
+                    dad[r] = p
+                    return
+            else:
+                if lson[p] != NIL:
+                    p = lson[p]
+                else:
+                    lson[p] = r
+                    dad[r] = p
+                    return
+            i = 1
+            while i < F_MAX:
+                cmp = text[key + i] - text[p + i]
+                if cmp != 0:
+                    break
+                i += 1
+            if i > st["len"]:
+                st["pos"] = p
+                st["len"] = i
+                if i >= F_MAX:
+                    break
+        dad[r] = dad[p]
+        lson[r] = lson[p]
+        rson[r] = rson[p]
+        dad[lson[p]] = r
+        dad[rson[p]] = r
+        if rson[dad[p]] == p:
+            rson[dad[p]] = r
+        else:
+            lson[dad[p]] = r
+        dad[p] = NIL
+
+    def delete(p):
+        if dad[p] == NIL:
+            return
+        if rson[p] == NIL:
+            q = lson[p]
+        elif lson[p] == NIL:
+            q = rson[p]
+        else:
+            q = lson[p]
+            if rson[q] != NIL:
+                while rson[q] != NIL:
+                    q = rson[q]
+                rson[dad[q]] = lson[q]
+                dad[lson[q]] = dad[q]
+                lson[q] = lson[p]
+                dad[lson[p]] = q
+            rson[q] = rson[p]
+            dad[rson[p]] = q
+        dad[q] = dad[p]
+        if rson[dad[p]] == p:
+            rson[dad[p]] = q
+        else:
+            lson[dad[p]] = q
+        dad[p] = NIL
+
+    out = bytearray()
+    code_buf = bytearray(17)
+    code_buf[0] = 0
+    cbp = 1
+    mask = 1
+    s = 0
+    r = N - F_MAX
+    src = 0
+    ln = 0
+    while ln < F_MAX and src < len(data):
+        text[r + ln] = data[src]
+        src += 1
+        ln += 1
+    if ln == 0:
+        return b""
+    for i in range(1, F_MAX + 1):
+        insert(r - i)
+    insert(r)
+    while True:
+        if st["len"] > ln:
+            st["len"] = ln
+        if st["len"] <= THRESHOLD:
+            st["len"] = 1
+            code_buf[0] |= mask
+            code_buf[cbp] = text[r]
+            cbp += 1
+        else:
+            code_buf[cbp] = st["pos"] & 0xFF
+            code_buf[cbp + 1] = ((st["pos"] >> 4) & 0xF0) | (st["len"] - (THRESHOLD + 1))
+            cbp += 2
+        mask = (mask << 1) & 0xFF
+        if mask == 0:
+            out += code_buf[:cbp]
+            code_buf[0] = 0
+            cbp = 1
+            mask = 1
+        last = st["len"]
+        i = 0
+        while i < last and src < len(data):
+            delete(s)
+            c = data[src]
+            src += 1
+            text[s] = c
+            if s < F_MAX - 1:
+                text[s + N] = c
+            s = (s + 1) & (N - 1)
+            r = (r + 1) & (N - 1)
+            insert(r)
+            i += 1
+        while i < last:
+            i += 1
+            delete(s)
+            s = (s + 1) & (N - 1)
+            r = (r + 1) & (N - 1)
+            ln -= 1
+            if ln:
+                insert(r)
+        if ln <= 0:
+            break
+    if cbp > 1:
+        out += code_buf[:cbp]
+    return bytes(out)
+
+
+def pack_body(crc: int, code: bytes) -> bytes:
+    """Store script code like the original compiler: LZSS when that is smaller, otherwise raw (A == B)."""
+    c = compress(code)
+    if len(c) < len(code):
+        return struct.pack("<3I", crc, len(code), len(c)) + c
+    return struct.pack("<3I", crc, len(code), len(code)) + code

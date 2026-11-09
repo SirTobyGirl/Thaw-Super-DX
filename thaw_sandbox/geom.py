@@ -58,8 +58,12 @@ def thug2_to_thaw(b: bytes, groups: list, textures_by_group: dict, set_100: bool
             n_fixed = strip_extra_qwords(out, k + n[8])
             if n_fixed:
                 stats["extra qwords stripped"] = stats.get("extra qwords stripped", 0) + 1
-                lo = struct.unpack_from("<I", out, k + n[8])[0]
-                field = ((lo >> 16) & 0x3FF) - n_fixed  # VU slots used: 3 per vertex + 7, plus the extras
+            lo = struct.unpack_from("<I", out, k + n[8])[0]
+            field = thaw_field(bytes(out), k + n[8])
+            if field is None:  # leaf type the formula does not cover: THUG2 value minus what was removed
+                field = ((lo >> 16) & 0x3FF) - (n_fixed + 1 if n_fixed else 0)
+            if field != (lo >> 16) & 0x3FF:
+                stats["field corrected"] = stats.get("field corrected", 0) + 1
                 struct.pack_into("<I", out, k + n[8], (lo & ~(0x3FF << 16)) | (field << 16))
                 struct.pack_into("<I", out, o + 9 * 4, (n[9] & 0xFC00FFFF) | (field << 16))
         if set_100:
@@ -163,6 +167,62 @@ def prune_leaves(b: bytes, keep) -> tuple[bytes, int]:
     return bytes(out), count[0]
 
 
+def thaw_field(b: bytes, o: int):
+    """THAW's VU slot count for a leaf (node w9 bits 16-25 and the leaf DMA tag bits 16-25): the sum over its
+    batches (one per MSCAL) of 3 per vertex + 2 + GS registers in that batch, mod 1024. Holds for 96% of all
+    THAW leaves when the vertex count is taken from the V2_32 UV unpack, and for all THAW leaves when leaves without
+    UVs take it from their V3_16 unpack (normals?). The engine places the next leaf / group SIGNAL packet right after it:
+    a value larger than THAW's made the microcode's output overwrite the SIGNAL and the frame never ended."""
+    tot, nv, nr = 0, None, 0
+    for _, w in vif_codes(b, o):
+        cmd = (w >> 24) & 0x7F
+        if cmd & 0x6F == 0x68:
+            nr = (w >> 16) & 0xFF
+        elif cmd & 0x6F in (0x64, 0x69) and nv is None:  # vertex count: UVs (V2_32) or normals (V3_16)
+            nv = ((w >> 16) & 0xFF) or 256
+        elif cmd in (0x14, 0x15, 0x17):
+            if nv is None:
+                return None
+            tot += 3 * nv + 2 + nr
+            nv, nr = None, 0
+    return tot & 0x3FF
+
+
+# Vertex GIFtag word 1 bits 0-7 select the VU1 microcode routine (an index into a branch table in VU1 micro
+# memory). THAW moved some routines; matching the routine bodies of both games' microcode (THUG2 Training state
+# vs THAW state) gives this map; all other selectors used by THUG2 levels are unchanged.
+SELECTOR_MAP = {0x52: 0x4E, 0x54: 0x50, 0x56: 0x52, 0x58: 0x54}
+
+
+def relayout_batches(b: bytearray, o: int):
+    """Rewrite every unpack address in a leaf to THAW's contiguous layout. Per batch, starting at s:
+    register GIFtag @s, registers @s+1.., vertex GIFtag @s+1+R, then the per-vertex streams (UV or normal,
+    colour, position) @s+2+R, s+3+R, s+4+R (stride 3); the next batch starts at s + 3n + 2 + R.
+    THUG2 leaves with the extra qwords had later batches one slot further on, so the last vertex overlapped
+    the engine's next packet (the group SIGNAL) - verified in VU1 memory with the PCSX2 dev build."""
+    s, R, n, k, has_regs = 0, 0, 0, 0, False
+    for p, w in vif_codes(bytes(b), o):
+        cmd = (w >> 24) & 0x7F
+        if cmd >= 0x60:
+            num = ((w >> 16) & 0xFF) or 256
+            kind = cmd & 0x6F
+            if kind == 0x6C and num == 1 and k == 0:          # register GIFtag
+                addr = s
+            elif kind == 0x68:                                # register block
+                R, has_regs = num, True
+                addr = s + 1
+            elif kind == 0x6C and num == 1:                   # vertex GIFtag
+                addr = s + 1 + R
+            else:                                             # per-vertex streams, in order
+                n = num
+                addr = s + 2 + R + (k - 3)
+            struct.pack_into("<I", b, p, (w & ~0x3FF) | (addr & 0x3FF))
+            k += 1
+        elif cmd in (0x14, 0x15, 0x17):
+            s += 3 * n + 2 + R
+            R, n, k, has_regs = 0, 0, 0, False
+
+
 def strip_extra_qwords(b: bytearray, o: int) -> int:
     """THUG2 leaves may carry two extra V4_32 n1 unpacks per batch that THAW's layout does not have: one
     right after the register block (moving the vertex GIFtag/UV/colour/position slots up by one) and one
@@ -192,9 +252,14 @@ def strip_extra_qwords(b: bytearray, o: int) -> int:
         if cmd in (0x14, 0x15, 0x17):
             shift = 0
         prev = cmd
+    if param or fixed:
+        relayout_batches(b, o)
     for t in tags:
         w0, w2 = struct.unpack_from("<I", b, t)[0], struct.unpack_from("<I", b, t + 8)[0]
         struct.pack_into("<I", b, t, w0 | 0x8000)  # EOP: set on every vertex GIFtag in THAW
+        w1 = struct.unpack_from("<I", b, t + 4)[0]
+        if (w1 & 0xFF) in SELECTOR_MAP:
+            struct.pack_into("<I", b, t + 4, (w1 & ~0xFF) | SELECTOR_MAP[w1 & 0xFF])
         if param:
             struct.pack_into("<I", b, t + 8, (w2 & 0xFFFF) | param)
     return fixed
@@ -242,3 +307,37 @@ def bind_textures(b: bytes, tex: bytes) -> tuple[bytes, dict]:
                     struct.pack_into("<I", out, q, (lo & ~0x1C) | (mxl << 2))
         st["bound"] += 1
     return bytes(out), st
+
+
+def leaf_regs(b: bytes, o: int) -> list:
+    """GS register ids in the leaf's first register block (V3_32 unpack of lo/hi/reg triplets)."""
+    for p, w in vif_codes(b, o):
+        if (w >> 24) & 0x6F == 0x68:
+            return [struct.unpack_from("<I", b, p + 4 + 12 * i + 8)[0] & 0xFF for i in range((w >> 16) & 0xFF)]
+    return []
+
+
+def drop_untextured(b: bytes) -> tuple[bytes, int]:
+    """Unlink leaves without a TEX0 register (THUG2 testlevel has an untextured lit leaf type, microcode tag 0x44,
+    that THAW never uses; it froze the renderer)."""
+    k = struct.unpack_from("<I", b, 0)[0]
+    bad = {o for o, n in walk(b) if n[7] & LEAF and 0x06 not in leaf_regs(b, k + n[8])}
+    if not bad:
+        return b, 0
+    order = []
+    stack = [struct.unpack_from("<I", b, k)[0]]
+    idx = {}
+
+    def dfs(off):
+        while off != 0xFFFFFFFF:
+            n = struct.unpack_from("<20I", b, k + off)
+            if n[7] & LEAF:
+                idx[k + off] = len(idx)
+            elif n[8] != 0xFFFFFFFF:
+                dfs(n[8])
+            off = n[10]
+    r = struct.unpack_from("<I", b, k)[0]
+    dfs(struct.unpack_from("<I", b, k + r + 32)[0])
+    drop_ids = {idx[o] for o in bad if o in idx}
+    out, _ = prune_leaves(b, lambda i: i not in drop_ids)
+    return out, len(drop_ids)

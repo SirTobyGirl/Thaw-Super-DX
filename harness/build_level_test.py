@@ -116,6 +116,8 @@ def main(base, out, src_dir, code, z, tex_mode="thug2", parts=("tex", "geom", "c
                 by[t.group] = []
             by[t.group].append(t.crc)
         geom, st = GM.thug2_to_thaw(geom, order, by)
+        geom, ndrop = GM.drop_untextured(geom)
+        st["untextured leaves dropped"] = ndrop
         if os.environ.get("LEAVES"):  # experiment: "a:b" keeps only leaves a..b-1 active
             a_, b_ = map(int, os.environ["LEAVES"].split(":"))
             geom = GM.set_active(geom, lambda i: a_ <= i < b_)

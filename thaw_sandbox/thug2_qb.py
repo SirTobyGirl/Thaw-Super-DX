@@ -81,8 +81,15 @@ class _P:
                 if nt is not None and nt.id == 7:  # name = value
                     self.next()
                     s.items.append((self.u32(tk), self.value()))
+                elif nt is not None and nt.id == 3:  # name { ... } (no '='; seen in Training's tr.qb)
+                    s.items.append((self.u32(tk), self.value()))
                 else:  # bare name = flag
                     s.items.append((0, Name(self.u32(tk))))
+                continue
+            if tk.id in (3, 5, 10, 23, 26, 27, 28, 30, 31):
+                # bare value inside a struct (Training's breakable objects hold script-like lines such as
+                # "Wait 10 seconds" in a Shatter { } block): keep it as an unnamed item
+                s.items.append((0, self.value()))
                 continue
             raise ValueError(f"unexpected token {tk.id:#x} in struct at {tk.off}")
 

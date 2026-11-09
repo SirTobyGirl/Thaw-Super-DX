@@ -173,17 +173,19 @@ def thaw_field(b: bytes, o: int):
     THAW leaves when the vertex count is taken from the V2_32 UV unpack, and for all THAW leaves when leaves without
     UVs take it from their V3_16 unpack (normals?). The engine places the next leaf / group SIGNAL packet right after it:
     a value larger than THAW's made the microcode's output overwrite the SIGNAL and the frame never ended."""
-    tot, nv, nr = 0, None, 0
+    tot, nv, nr, cl = 0, None, 0, 3
     for _, w in vif_codes(b, o):
         cmd = (w >> 24) & 0x7F
-        if cmd & 0x6F == 0x68:
+        if cmd == 0x01:
+            cl = w & 0xFF  # slots per vertex in this batch (3, or 2 without UVs)
+        elif cmd & 0x6F == 0x68:
             nr = (w >> 16) & 0xFF
-        elif cmd & 0x6F in (0x64, 0x69) and nv is None:  # vertex count: UVs (V2_32) or normals (V3_16)
+        elif cmd & 0x6F in (0x64, 0x69, 0x6A, 0x6E) and nv is None:  # vertex count: first per-vertex stream
             nv = ((w >> 16) & 0xFF) or 256
         elif cmd in (0x14, 0x15, 0x17):
             if nv is None:
                 return None
-            tot += 3 * nv + 2 + nr
+            tot += cl * nv + 2 + nr
             nv, nr = None, 0
     return tot & 0x3FF
 

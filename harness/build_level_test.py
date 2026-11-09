@@ -128,6 +128,34 @@ def main(base, out, src_dir, code, z, tex_mode="thug2", parts=("tex", "geom", "c
                     struct.pack_into("<I", gb, o_ + 17 * 4, 1)
             geom = bytes(gb)
             print("all leaves -> group 1 texture 1")
+        if os.environ.get("PLAIN_TAGS"):  # experiment: vertex GIFtag word2 top half -> 0, word1 bits 12-13 -> 0
+            gb = bytearray(geom)
+            for o_, n_ in GM.walk(geom):
+                if not n_[7] & 2:
+                    continue
+                cs = list(GM.vif_codes(geom, 0x10 + n_[8]))
+                for j_, (p_, w_) in enumerate(cs):
+                    if (w_ >> 24) & 0x6F == 0x6C and ((w_ >> 16) & 0xFF) == 1 and j_ and cs[j_ - 1][1] == 0x01000103:
+                        w1_, w2_ = struct.unpack_from("<2I", gb, p_ + 8)
+                        struct.pack_into("<2I", gb, p_ + 8, w1_ & ~0x3000, w2_ & 0xFFFF)
+            geom = bytes(gb)
+            print("vertex GIFtag microcode params cleared")
+        if os.environ.get("OPAQUE"):  # experiment: ALPHA/TEST registers -> the plain opaque values
+            gb = bytearray(geom)
+            for o_, n_ in GM.walk(geom):
+                if not n_[7] & 2:
+                    continue
+                for p_, w_ in GM.vif_codes(geom, 0x10 + n_[8]):
+                    if (w_ >> 24) & 0x6F == 0x68:
+                        for k_ in range((w_ >> 16) & 0xFF):
+                            q_ = p_ + 4 + 12 * k_
+                            r_ = struct.unpack_from("<I", gb, q_ + 8)[0] & 0xFF
+                            if r_ == 0x42:
+                                struct.pack_into("<2I", gb, q_, 0xA, 0)
+                            elif r_ == 0x47:
+                                struct.pack_into("<2I", gb, q_, 0x50000, 0)
+            geom = bytes(gb)
+            print("ALPHA/TEST forced opaque")
         if os.environ.get("CLEAR_FLAG"):  # experiment: clear these leaf flag bits
             m_ = int(os.environ["CLEAR_FLAG"], 0); gb = bytearray(geom)
             for o_, n_ in GM.walk(geom):
@@ -153,6 +181,9 @@ def main(base, out, src_dir, code, z, tex_mode="thug2", parts=("tex", "geom", "c
         tex = struct.pack("<HH4I", 6, 0x14, 0, 0, 0, 0)  # version 6 header with zero textures (experiment)
     else:
         tex = open(f"{src_dir}/{code}.tex.ps2", "rb").read()
+    if tex_mode == "convert" and not os.environ.get("NO_BIND"):
+        geom, bst = GM.bind_textures(geom, tex)  # leaf TEX0/MIPTBP/TEX1 from the converted dictionary
+        print(f"texture registers bound: {bst}")
     rep = {
         biggest[".tex"][0].pos: tex,
         biggest[".geom"][0].pos: geom,

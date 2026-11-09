@@ -198,3 +198,47 @@ def strip_extra_qwords(b: bytearray, o: int) -> int:
         if param:
             struct.pack_into("<I", b, t + 8, (w2 & 0xFFFF) | param)
     return fixed
+
+
+def bind_textures(b: bytes, tex: bytes) -> tuple[bytes, dict]:
+    """Write each leaf's GS texture registers from the THAW texture dictionary it will be loaded with.
+    THAW never patches these for ordinary leaves (only flag 0x8000000 ones, in the load walker FUN_001cfb58),
+    so the file must carry them: in Kyoto all 3049 ordinary leaves have TEX0 == their texture record's TEX0
+    and MIPTBP1 == its MIPTBP1; TEX1 carries the mip count (MXL, bits 2-4) and register 0x34 only exists
+    for mip-mapped textures. Leaves without a MIPTBP slot are drawn from the base level only."""
+    from thaw_sandbox import thaw_tex as TT
+    offs, texs = TT.parse(tex)
+    ng = struct.unpack_from("<H", tex, 2)[0]
+    groups = [struct.unpack_from("<20I", tex, 0x10 + 80 * g) for g in range(ng)]
+    out = bytearray(b)
+    k = struct.unpack_from("<I", b, 0)[0]
+    st = {"bound": 0, "skipped": 0}
+    for o, n in walk(b):
+        if not n[7] & LEAF:
+            continue
+        if n[7] & 0x8100000 or not (1 <= n[11] <= ng) or not (1 <= n[17] <= groups[n[11] - 1][15]):
+            st["skipped"] += 1
+            continue
+        t = texs[groups[n[11] - 1][16] + n[17] - 1]
+        w = t.words
+        levels = w[2] + 1
+        for p, code in vif_codes(bytes(out), k + n[8]):
+            if (code >> 24) & 0x6F != 0x68:  # V3_32 unpack = register block (lo, hi, reg) triplets
+                continue
+            nregs = (code >> 16) & 0xFF
+            regs = [struct.unpack_from("<I", out, p + 4 + 12 * i + 8)[0] & 0xFF for i in range(nregs)]
+            has_mip = 0x34 in regs
+            for i, r in enumerate(regs):
+                q = p + 4 + 12 * i
+                if r == 0x06:
+                    struct.pack_into("<2I", out, q, w[4], w[5])
+                elif r == 0x34:
+                    struct.pack_into("<2I", out, q, w[6], w[7])
+                elif r == 0x36:
+                    struct.pack_into("<2I", out, q, w[8], w[9])
+                elif r == 0x14:
+                    lo = struct.unpack_from("<I", out, q)[0]
+                    mxl = min(levels - 1, 6) if has_mip else 0
+                    struct.pack_into("<I", out, q, (lo & ~0x1C) | (mxl << 2))
+        st["bound"] += 1
+    return bytes(out), st

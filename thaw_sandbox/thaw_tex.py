@@ -105,7 +105,7 @@ class NewTexture:
     cpsm: int          # 0x00 CT32, 0x02 CT16
     clut: bytes        # palette as stored by the GS (CT32 RGBA with alpha 0x80 = opaque, or CT16)
     mips: list         # linear pixel data per level, largest first
-    flags: int = 0x40005  # record field 3; meaning unknown, most common value in THAW
+    flags: int = None     # unused: record field 3 is computed from the upload formats
     group: int = 0        # texture group crc; geometry refers to groups, so keep the source's groups
 
 
@@ -119,6 +119,35 @@ def _tbw(psm, w):
 def _pages(psm, w, h, tbw):
     pw, ph = PAGE_DIMS[psm]
     return (tbw * 64 // pw) * -(-h // ph)
+
+
+def upload_format(psm, w, h, tbw):
+    """How THAW's tools upload one level (table read from Kyoto's 783 textures):
+    T4: <= 8 wide (and 64x256) native; square >= 32, or both sides >= 128 -> CT32 (w/2, h/4); otherwise CT16 (w/2, h/2).
+    T8: 64x128 native; otherwise CT32 (w/2, h/2). Swizzled uploads use half the texture's buffer width.
+    Returns (dpsm, dbw, rrw, rrh, field-3 bit base: 25 = CT32, 18 = CT16, None = native)."""
+    if psm == 0x14:
+        if w <= 8 or (w, h) == (64, 256):
+            return psm, tbw, w, h, None
+        if (w == h and w >= 32) or (w >= 128 and h >= 128):
+            return 0x00, max(1, tbw // 2), w // 2, max(1, h // 4), 25
+        return 0x02, max(1, tbw // 2), w // 2, max(1, h // 2), 18
+    if psm == 0x13:
+        if (w, h) == (64, 128) or w < 16:
+            return psm, tbw, w, h, None
+        return 0x00, max(1, tbw // 2), w // 2, max(1, h // 2), 25
+    return psm, tbw, w, h, None
+
+
+def record_flags(bit_bases, cpsm):
+    """Texture record field 3: per mip level L, 1 << (base + L) with base 25 = level uploaded as CT32,
+    18 = as CT16, no bit = native. The engine rebuilds every upload packet at load from these bits
+    (verified in RAM), so they must describe the stored data. Bit 2 mostly = CT32 palette, bit 0 on most."""
+    f = 0
+    for lv, base in enumerate(bit_bases):
+        if base is not None:
+            f |= 1 << (base + lv)
+    return f | (4 if cpsm == 0 else 0) | 1
 
 
 BLOCK_DIMS = {0x14: (32, 16), 0x13: (16, 16), 0x02: (16, 8), 0x00: (8, 8)}
@@ -156,7 +185,7 @@ GROUP_END = struct.pack("<QQ", 0x60000002, 0x50000002 << 32) + \
 
 
 def write(textures: list) -> bytes:
-    """Build a version 6 texture dictionary. Pixels are uploaded in their own format (no swizzling).
+    """Build a version 6 texture dictionary, storing pixels in THAW's upload formats (upload_format).
     Groups (and their order) come from NewTexture.group."""
     # 1. keep the source's groups (order of first appearance); each group gets the next VRAM window
     order, members = [], {}
@@ -224,14 +253,22 @@ def write(textures: list) -> bytes:
                 packets += _upload_packet(cbp, 1, t.cpsm, rw, rh, clut_off, len(t.clut))
             mip0_packet = None
             img_off = None
+            bases = []
+            img_size = 0
             for (w, h, tbw, _), tbp, px in zip(levels, tbps, mips):
+                dpsm, dbw, rrw, rrh, base = upload_format(t.psm, w, h, tbw)
+                if dpsm != t.psm:  # store the pixels the way the upload rectangle reads them
+                    vram = G.VRAM()
+                    vram.write(G.PSM[t.psm], tbp, tbw, w, h, px)
+                    px = vram.read(G.PSM[dpsm], tbp, dbw, rrw, rrh)
+                bases.append(base)
                 off = put(px)
+                img_size += len(px) + (-len(px) % 16)
                 if img_off is None:
                     img_off = off
                 if mip0_packet is None:
                     mip0_packet = len(packets) + 0x60
-                packets += _upload_packet(tbp, tbw, t.psm, w, h, off, len(px))
-            img_size = sum(len(px) + (-len(px) % 16) for px in mips)
+                packets += _upload_packet(tbp, dbw, dpsm, rrw, rrh, off, len(px))
             tw, th = t.width.bit_length() - 1, t.height.bit_length() - 1
             tex0 = (tbps[0] | (levels[0][2] << 14) | (t.psm << 20) | (tw << 26) | (th << 30) | (1 << 34)
                     | (cbp << 37) | (t.cpsm << 51) | (1 << 61))
@@ -239,7 +276,8 @@ def write(textures: list) -> bytes:
             for k, sh in ((1, 0), (2, 20), (3, 40)):
                 if k < len(levels):
                     mip1 |= (tbps[k] | (levels[k][2] << 14)) << sh
-            words = [t.crc, g["crc"], len(levels) - 1, t.flags, tex0 & 0xFFFFFFFF, tex0 >> 32,
+            flags = record_flags(bases, t.cpsm)
+            words = [t.crc, g["crc"], len(levels) - 1, flags, tex0 & 0xFFFFFFFF, tex0 >> 32,
                      mip1 & 0xFFFFFFFF, mip1 >> 32, 0, 0, img_off, img_size, clut_off if t.clut else 0,
                      len(t.clut), mip0_packet, len(mips[0]) << 12]
             records.append(struct.pack("<16I", *words))

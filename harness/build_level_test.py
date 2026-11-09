@@ -7,17 +7,18 @@ e.g.   build_level_test.py _workspace/build/sandbox.iso _workspace/build/berlin_
 The THAW zone keeps its table; its main .tex/.geom/.col/.nqb entries get the THUG2 level's data.
 The node array is renamed <ZONE>_NodeArray and records get the zone file's hash. BASE.iso is copied.
 """
+import os
 import struct
 import sys
 
 from thaw_sandbox import convert_thug2 as C, iso_manager as I, qb_data as QD, qb_file as F, qb_parser as Q, wad, zone, pak
-from thaw_sandbox import thaw_tex as TT, thug2_tex as T2
+from thaw_sandbox import col as CL, geom as GM, thaw_tex as TT, thug2_tex as T2
 
 HED = "_workspace/stage/DATAP.HED"
 D = "_workspace/datap/"
 
 
-def main(base, out, src_dir, code, z, tex_mode="thug2", parts=("tex", "geom", "col", "nqb"), nqb_file=None):
+def main(base, out, src_dir, code, z, tex_mode="thug2", parts=("tex", "geom", "col", "nqb"), nqb_file=None, no_create=()):
     zpath = f"{D}worlds/worldzones/{z}/{z}.pak.ps2"
     zb = open(zpath, "rb").read()
     tab = zone.entries(zb)
@@ -41,6 +42,23 @@ def main(base, out, src_dir, code, z, tex_mode="thug2", parts=("tex", "geom", "c
         if it.name == old_na:
             it.name = new_na
     assert any(it.name == new_na for it in items), "node array not found"
+    if no_create:  # experiment: neutralise THUG2-only node classes (indices kept so links still resolve)
+        na = next(it for it in items if it.name == new_na).value
+        CLS, CAS, MODEL, WP = Q.qbcrc("Class"), Q.qbcrc("CreatedAtStart"), Q.qbcrc("model"), Q.qbcrc("Waypoint")
+        drop = {Q.qbcrc(c) for c in no_create}
+        keep_class = {Q.qbcrc("GameObject")}
+        n_off = 0
+        structs = list(na.items) + [it.value for it in items if isinstance(it.value, QD.Struct)]  # + included structs
+        for s_ in structs:
+            c = next((getattr(v, "crc", None) for k, v in s_.items if k == CLS), None)
+            if c not in drop:
+                continue
+            n_off += 1
+            s_.items = [(k, v) for k, v in s_.items
+                        if k != MODEL and not (k == 0 and getattr(v, "crc", None) == CAS)]
+            if c not in keep_class:
+                s_.items = [(k, QD.Name(WP) if k == CLS else v) for k, v in s_.items]
+        print(f"neutralised {n_off} nodes of {sorted(no_create)} (model + CreatedAtStart removed)")
     if not nqb_file:  # THAW node files carry a sorted name index; THUG2 ones do not
         na = next(it for it in items if it.name == new_na).value
         NAME = Q.qbcrc("name")
@@ -49,6 +67,7 @@ def main(base, out, src_dir, code, z, tex_mode="thug2", parts=("tex", "geom", "c
                         F.Item(12, Q.qbcrc(f"{z}_NodeArray_SortedIndices"), QD.Array(1, [i for _, i in pairs]))]  # at the end, like THAW
         print(f"sorted node index: {len(pairs)} named nodes")
     nqb = F.write(orig_crc, items)
+    geom = open(f"{src_dir}/{code}.geom.ps2", "rb").read()
     if tex_mode.startswith("file:"):
         tex = open(tex_mode[5:], "rb").read()
     elif tex_mode == "convert":
@@ -57,10 +76,38 @@ def main(base, out, src_dir, code, z, tex_mode="thug2", parts=("tex", "geom", "c
         new = []
         for x in t2:
             if x.mips:
-                new.append(TT.NewTexture(x.crc, x.width, x.height, x.psm, x.cpsm, x.clut, x.mips, group=x.group))
+                mips = x.mips[:1] if os.environ.get("TEX_TOP_ONLY") else x.mips[:4]  # THAW uses at most 4 levels
+                new.append(TT.NewTexture(x.crc, x.width, x.height, x.psm, x.cpsm, x.clut, mips, group=x.group))
             else:  # header-only entry: stand-in 8x8 grey so references resolve
-                new.append(TT.NewTexture(x.crc, 8, 8, 0x14, 0, grey, [bytes(32)], group=x.group))
+                if os.environ.get("PLACEHOLDER32"):
+                    new.append(TT.NewTexture(x.crc, 32, 32, 0x14, 0, grey, [bytes(512)], group=x.group))
+                else:
+                    new.append(TT.NewTexture(x.crc, 8, 8, 0x14, 0, grey, [bytes(32)], group=x.group))
         tex = TT.write(new)
+        order, by = [], {}
+        for t in new:  # the writer keeps groups in order of first appearance, textures in input order
+            if t.group not in by:
+                order.append(t.group)
+                by[t.group] = []
+            by[t.group].append(t.crc)
+        geom, st = GM.thug2_to_thaw(geom, order, by)
+        if os.environ.get("LEAVES"):  # experiment: "a:b" keeps only leaves a..b-1 active
+            a_, b_ = map(int, os.environ["LEAVES"].split(":"))
+            geom = GM.set_active(geom, lambda i: a_ <= i < b_)
+            print(f"active leaves {a_}..{b_}")
+        if os.environ.get("CLEAR_W14"):  # experiment: drop the +0x38 structure links
+            gb = bytearray(geom); nclr = 0
+            for o_, n_ in GM.walk(geom):
+                if n_[14] != 0xFFFFFFFF:
+                    struct.pack_into("<I", gb, o_ + 14 * 4, 0xFFFFFFFF); nclr += 1
+                    struct.pack_into("<I", gb, o_ + 7 * 4, n_[7] & ~0x80000)
+            geom = bytes(gb)
+            print(f"cleared w14 on {nclr} nodes")
+        if os.environ.get("RUN_LEAVES"):  # experiment: "a:b" keeps MSCAL only in leaves a..b-1
+            a_, b_ = map(int, os.environ["RUN_LEAVES"].split(":"))
+            geom = GM.mute_leaves(geom, lambda i: a_ <= i < b_)
+            print(f"microcode runs only for leaves {a_}..{b_}")
+        print(f"geometry: {st}")
         print(f"textures: {len(new)} ({sum(1 for x in t2 if not x.mips)} placeholders), {len(tex)} bytes")
     elif tex_mode == "empty":
         tex = struct.pack("<HH4I", 6, 0x14, 0, 0, 0, 0)  # version 6 header with zero textures (experiment)
@@ -68,12 +115,38 @@ def main(base, out, src_dir, code, z, tex_mode="thug2", parts=("tex", "geom", "c
         tex = open(f"{src_dir}/{code}.tex.ps2", "rb").read()
     rep = {
         biggest[".tex"][0].pos: tex,
-        biggest[".geom"][0].pos: open(f"{src_dir}/{code}.geom.ps2", "rb").read(),
-        biggest[".col"][0].pos: open(f"{src_dir}/{code}.col.ps2", "rb").read(),
+        biggest[".geom"][0].pos: geom,
+        biggest[".col"][0].pos: CL.thug2_to_thaw(open(f"{src_dir}/{code}.col.ps2", "rb").read()),
         orig_nqb.pos: nqb,
     }
+    # level scripts: keep the zone's record names (the engine calls <ZONE>_Setup etc.) with empty bodies,
+    # append the THUG2 level's scripts (its nodes name them as trigger scripts); empty the ped spawn list
+    named = {zb[x.pos + 32:x.pos + 192].split(b"\0")[0].decode().split("\\")[-1]: x
+             for x in tab if struct.unpack_from("<I", zb, x.pos + 28)[0] & 0x20}
+    se = named[f"{z}_scripts.qb.ps2"]
+    sp = pak.data_pos(se, 0)
+    scrc, sitems = F.read(zb[sp:sp + se.size])
+    empty = C.script_body(b"\x01\x24")
+    for it in sitems:
+        if it.vtype == 7:
+            it.value = empty
+    have = {it.name for it in sitems}
+    _, extra = F.read(C.convert(open(f"{src_dir}/{code}_scripts.qb", "rb").read(), "x")[0])
+
+    if os.environ.get("NO_LEVEL_SCRIPTS"):  # experiment: leave the THUG2 level's scripts out
+        extra = []
+    sitems += [it for it in extra if it.name not in have]
+    rep[se.pos] = F.write(scrc, sitems)
+    pe = named[f"{z}_peds.qb.ps2"]
+    pp = pak.data_pos(pe, 0)
+    pcrc, pitems = F.read(zb[pp:pp + pe.size])
+    for it in pitems:
+        if it.name == Q.qbcrc(f"{z}_skate_peds"):
+            it.value.items = []
+    rep[pe.pos] = F.write(pcrc, pitems)
+    print(f"scripts: {len(sitems)} records ({len(extra)} from {code}_scripts)")
     keep = {"tex": biggest[".tex"][0].pos, "geom": biggest[".geom"][0].pos, "col": biggest[".col"][0].pos,
-            "nqb": orig_nqb.pos}
+            "nqb": orig_nqb.pos, "scripts": se.pos, "peds": pe.pos}
     rep = {k: v for k, v in rep.items() if k in {keep[p] for p in parts}}
     print("replacing:", ", ".join(parts), "| tex:", tex_mode)
     new_zone = zone.rebuild(zb, rep)
@@ -109,4 +182,5 @@ if __name__ == "__main__":
     mode = a[a.index("--tex") + 1] if "--tex" in a else "thug2"
     parts = a[a.index("--parts") + 1].split(",") if "--parts" in a else ("tex", "geom", "col", "nqb")
     nqbf = a[a.index("--nqb") + 1] if "--nqb" in a else None
-    main(*a[:5], tex_mode=mode, parts=parts, nqb_file=nqbf)
+    nc = a[a.index("--no-create") + 1].split(",") if "--no-create" in a else ()
+    main(*a[:5], tex_mode=mode, parts=parts, nqb_file=nqbf, no_create=nc)

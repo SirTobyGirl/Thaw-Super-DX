@@ -59,6 +59,14 @@ def main(base, out, src_dir, code, z, tex_mode="thug2", parts=("tex", "geom", "c
             if c not in keep_class:
                 s_.items = [(k, QD.Name(WP) if k == CLS else v) for k, v in s_.items]
         print(f"neutralised {n_off} nodes of {sorted(no_create)} (model + CreatedAtStart removed)")
+    if os.environ.get("NODE_KEEP"):  # experiment: keep only these node classes, drop all links
+        keep_cls = {Q.qbcrc(c) for c in os.environ["NODE_KEEP"].split(",")}
+        na = next(it for it in items if it.name == new_na).value
+        CLS, LINKS = Q.qbcrc("Class"), Q.qbcrc("links")
+        na.items = [s_ for s_ in na.items if any(k == CLS and getattr(v, "crc", None) in keep_cls for k, v in s_.items)]
+        for s_ in na.items:
+            s_.items = [(k, v) for k, v in s_.items if k != LINKS]
+        print(f"node array cut to {len(na.items)} nodes of {os.environ['NODE_KEEP']}")
     if not nqb_file:  # THAW node files carry a sorted name index; THUG2 ones do not
         na = next(it for it in items if it.name == new_na).value
         NAME = Q.qbcrc("name")
@@ -68,8 +76,25 @@ def main(base, out, src_dir, code, z, tex_mode="thug2", parts=("tex", "geom", "c
         print(f"sorted node index: {len(pairs)} named nodes")
     nqb = F.write(orig_crc, items)
     geom = open(f"{src_dir}/{code}.geom.ps2", "rb").read()
+    if os.environ.get("SECTORS"):  # experiment: "a:b" keeps only root children a..b-1
+        a_, b_ = map(int, os.environ["SECTORS"].split(":"))
+        geom, nk = GM.keep_sectors(geom, lambda i: a_ <= i < b_)
+        print(f"sectors kept {a_}..{b_} of {nk}")
+    if os.environ.get("KEEP_LEAVES"):  # experiment: comma list of leaf indices (depth-first) to keep
+        ks = {int(x) for x in os.environ["KEEP_LEAVES"].split(",")}
+        geom, nl = GM.prune_leaves(geom, lambda i: i in ks)
+        print(f"leaves kept {sorted(ks)} of {nl}")
     if tex_mode.startswith("file:"):
         tex = open(tex_mode[5:], "rb").read()
+        if os.environ.get("ONE_TEX"):  # experiment: every leaf uses group 1 texture 1 of the given file
+            gb = bytearray(geom)
+            for o_, n_ in GM.walk(geom):
+                if n_[7] & 2:
+                    struct.pack_into("<I", gb, o_ + 7 * 4, n_[7] | 0x100)
+                    struct.pack_into("<I", gb, o_ + 11 * 4, 1)
+                    struct.pack_into("<I", gb, o_ + 17 * 4, 1)
+            geom = bytes(gb)
+            print("all leaves -> group 1 texture 1 (texture file given)")
     elif tex_mode == "convert":
         _, t2 = T2.parse(open(f"{src_dir}/{code}.tex.ps2", "rb").read())
         grey = struct.pack("<16I", *([0x80606060] * 16))  # placeholder palette, CT32, opaque grey
@@ -95,6 +120,21 @@ def main(base, out, src_dir, code, z, tex_mode="thug2", parts=("tex", "geom", "c
             a_, b_ = map(int, os.environ["LEAVES"].split(":"))
             geom = GM.set_active(geom, lambda i: a_ <= i < b_)
             print(f"active leaves {a_}..{b_}")
+        if os.environ.get("ONE_TEX"):  # experiment: every leaf uses group 1 texture 1
+            gb = bytearray(geom)
+            for o_, n_ in GM.walk(geom):
+                if n_[7] & 2:
+                    struct.pack_into("<I", gb, o_ + 11 * 4, 1)
+                    struct.pack_into("<I", gb, o_ + 17 * 4, 1)
+            geom = bytes(gb)
+            print("all leaves -> group 1 texture 1")
+        if os.environ.get("CLEAR_FLAG"):  # experiment: clear these leaf flag bits
+            m_ = int(os.environ["CLEAR_FLAG"], 0); gb = bytearray(geom)
+            for o_, n_ in GM.walk(geom):
+                if n_[7] & 2:
+                    struct.pack_into("<I", gb, o_ + 7 * 4, n_[7] & ~m_)
+            geom = bytes(gb)
+            print(f"cleared leaf flag bits {m_:#x}")
         if os.environ.get("CLEAR_W14"):  # experiment: drop the +0x38 structure links
             gb = bytearray(geom); nclr = 0
             for o_, n_ in GM.walk(geom):
@@ -175,6 +215,9 @@ def main(base, out, src_dir, code, z, tex_mode="thug2", parts=("tex", "geom", "c
     I.patch_in_place(out, wad_off + e.offset * 2048, new_zone + b"\0" * (slot - len(new_zone)))
     I.patch_in_place(out, hed_off, bytes(hed_b))
     print("built", out)
+    sys.path.insert(0, os.path.dirname(__file__))
+    import rotate_isos
+    rotate_isos.rotate(3)
 
 
 if __name__ == "__main__":

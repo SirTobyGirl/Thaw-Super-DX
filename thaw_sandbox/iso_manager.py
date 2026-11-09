@@ -28,7 +28,13 @@ def stage_copy(vanilla: str, staging: str) -> str:
     if os.path.abspath(vanilla) == os.path.abspath(staging):
         raise ValueError("staging path must differ from the vanilla ISO")
     os.makedirs(os.path.dirname(staging), exist_ok=True)
-    shutil.copyfile(vanilla, staging)
+    if os.path.exists(staging):
+        os.remove(staging)  # a reflinked file must not be patched in place by an older copy
+    # reflink (btrfs/xfs): the copy shares unchanged data with its source, so a 4 GB test ISO costs only
+    # the bytes we patch. Falls back to a normal copy elsewhere.
+    import subprocess
+    if subprocess.run(["cp", "--reflink=auto", vanilla, staging]).returncode != 0:
+        shutil.copyfile(vanilla, staging)
     return staging
 
 

@@ -1,0 +1,9 @@
+.venv/
+_workspace/
+iso/
+*.iso
+*.chd
+__pycache__/
+tools/*/
+harness/*.jpg
+harness/vk.fifo

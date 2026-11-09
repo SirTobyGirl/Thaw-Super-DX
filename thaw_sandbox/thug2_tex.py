@@ -5,6 +5,7 @@ group   = u32 crc | u32 0 | u32 0 | u32 texture count | textures...
 texture = u32 (0) | u32 crc | u32 log2 width | u32 log2 height | u32 psm | u32 clut psm | u32 flags
           | zero padding up to a 16-byte file offset | clut (if palettised) | mip levels
           flags & 0xFF = mip count - 1. psm: 0x00 CT32, 0x02 CT16, 0x13 T8, 0x14 T4 (GS codes).
+          flags bit 31: header only (28 bytes), no padding, no clut, no pixels.
 Pixel data is linear (host order), not swizzled.
 """
 import struct
@@ -16,8 +17,7 @@ CLUT_ENTRIES = {0x13: 256, 0x14: 16}
 
 @dataclass
 class Texture:
-    """flags bit 31 (0x80000000) marks a composite texture whose layout is not decoded yet; parse()
-    raises NotImplementedError when it meets one."""
+    """flags bit 31 (0x80000000): header-only entry with no clut or pixel data (mips == [])."""
     crc: int
     width: int
     height: int
@@ -40,10 +40,10 @@ def parse(b: bytes) -> tuple[list[int], list[Texture]]:
         groups.append(gcrc)
         for k in range(n):
             _lead, crc, lw, lh, psm, cpsm, flags = struct.unpack_from("<7I", b, o)
-            if flags & 0x80000000:
-                raise NotImplementedError(
-                    f"composite texture (flags {flags:#x}, crc {crc:#010x}) at {o:#x}: layout not decoded yet; "
-                    "it embeds child texture headers where the palette would be")
+            if flags & 0x80000000:  # header only: no clut/pixels, no padding (data lives elsewhere)
+                texs.append(Texture(crc, 1 << lw, 1 << lh, psm, cpsm, flags, b"", [], gcrc))
+                o += 28
+                continue
             o += 28
             o += -o % 16
             w, h = 1 << lw, 1 << lh

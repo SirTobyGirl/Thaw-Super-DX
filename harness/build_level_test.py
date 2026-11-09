@@ -1,6 +1,6 @@
 """Experiment: put a converted THUG2 level into an existing THAW zone's slot (no WAD/ISO growth).
 
-usage: build_level_test.py BASE.iso OUT.iso THUG2_LEVEL_DIR THUG2_CODE THAW_ZONE [--tex empty|thug2]
+usage: build_level_test.py BASE.iso OUT.iso THUG2_LEVEL_DIR THUG2_CODE THAW_ZONE [--tex convert|empty|thug2|file:PATH]
        [--parts tex,geom,col,nqb] [--nqb PREBUILT_THAW.qb]
 e.g.   build_level_test.py _workspace/build/sandbox.iso _workspace/build/berlin_in_kyoto.iso \
            _workspace/thug2/be be z_ja
@@ -10,7 +10,8 @@ The node array is renamed <ZONE>_NodeArray and records get the zone file's hash.
 import struct
 import sys
 
-from thaw_sandbox import convert_thug2 as C, iso_manager as I, qb_file as F, qb_parser as Q, wad, zone, pak
+from thaw_sandbox import convert_thug2 as C, iso_manager as I, qb_data as QD, qb_file as F, qb_parser as Q, wad, zone, pak
+from thaw_sandbox import thaw_tex as TT, thug2_tex as T2
 
 HED = "_workspace/stage/DATAP.HED"
 D = "_workspace/datap/"
@@ -40,8 +41,28 @@ def main(base, out, src_dir, code, z, tex_mode="thug2", parts=("tex", "geom", "c
         if it.name == old_na:
             it.name = new_na
     assert any(it.name == new_na for it in items), "node array not found"
+    if not nqb_file:  # THAW node files carry a sorted name index; THUG2 ones do not
+        na = next(it for it in items if it.name == new_na).value
+        NAME = Q.qbcrc("name")
+        pairs = sorted((v.crc, i) for i, s_ in enumerate(na.items) for n, v in s_.items if n == NAME)
+        items += [F.Item(12, Q.qbcrc(f"{z}_NodeArray_SortedNames"), QD.Array(13, [QD.Name(c) for c, _ in pairs])),
+                        F.Item(12, Q.qbcrc(f"{z}_NodeArray_SortedIndices"), QD.Array(1, [i for _, i in pairs]))]  # at the end, like THAW
+        print(f"sorted node index: {len(pairs)} named nodes")
     nqb = F.write(orig_crc, items)
-    if tex_mode == "empty":
+    if tex_mode.startswith("file:"):
+        tex = open(tex_mode[5:], "rb").read()
+    elif tex_mode == "convert":
+        _, t2 = T2.parse(open(f"{src_dir}/{code}.tex.ps2", "rb").read())
+        grey = struct.pack("<16I", *([0x80606060] * 16))  # placeholder palette, CT32, opaque grey
+        new = []
+        for x in t2:
+            if x.mips:
+                new.append(TT.NewTexture(x.crc, x.width, x.height, x.psm, x.cpsm, x.clut, x.mips, group=x.group))
+            else:  # header-only entry: stand-in 8x8 grey so references resolve
+                new.append(TT.NewTexture(x.crc, 8, 8, 0x14, 0, grey, [bytes(32)], group=x.group))
+        tex = TT.write(new)
+        print(f"textures: {len(new)} ({sum(1 for x in t2 if not x.mips)} placeholders), {len(tex)} bytes")
+    elif tex_mode == "empty":
         tex = struct.pack("<HH4I", 6, 0x14, 0, 0, 0, 0)  # version 6 header with zero textures (experiment)
     else:
         tex = open(f"{src_dir}/{code}.tex.ps2", "rb").read()

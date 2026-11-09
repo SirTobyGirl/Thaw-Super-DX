@@ -108,3 +108,24 @@ def repack(pak_path: str, pab_path: str, src_dir: str, out_pak: str, out_pab: st
     with open(out_pab, "wb") as f:
         f.write(pab)
     return ents
+
+
+def repack_compact(pak: bytes, pab: bytes, src_dir: str) -> tuple[bytes, bytes]:
+    """Rebuild the .pab with every file back to back (original order, 16-byte aligned, 0xCD padding like the
+    shipped file) from src_dir, so a grown file shifts the rest instead of leaving its old copy behind.
+    THAW's qb.pab has no free space (16 bytes) and the game crashes at boot if it gets any larger than the
+    original, so callers must keep the result within the original size."""
+    pak = bytearray(pak)
+    ents = parse_pak(bytes(pak))
+    base = len(pak)
+    order = sorted((e for e in ents if e.name), key=lambda e: data_pos(e, base))
+    out = bytearray()
+    for e in order:
+        with open(_local(src_dir, e.name), "rb") as f:
+            data = f.read()
+        e.offset = base + len(out) - e.pos
+        e.size = len(data)
+        struct.pack_into("<2I", pak, e.pos + 4, e.offset, e.size)
+        out += data
+        out += b"\xcd" * (-len(out) % 16)
+    return bytes(pak), bytes(out)

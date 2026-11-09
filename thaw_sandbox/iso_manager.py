@@ -1,4 +1,5 @@
-"""ISO helpers. Strategy: never rebuild the disc; patch same-size data in place.
+"""ISO helpers. Strategy: never rebuild the disc; patch data in place (iso_build moves DATAP.WAD/HED to the end
+of the image with slack so they can grow).
 
 The vanilla disc is copied to a staging path first (the original is never written to).
 LBAs, UDF structures and SYSTEM.CNF stay untouched because only file contents change.
@@ -13,7 +14,14 @@ SECTOR = 2048
 
 
 def file_extent(iso_path: str, inner_path: str) -> tuple[int, int]:
-    """Return (byte offset in the ISO, length) of a file, e.g. '/DATAP.WAD;1'."""
+    """Return (byte offset in the ISO, length) of a file, e.g. '/DATAP.WAD;1'.
+    Root files are read straight from the ISO9660 directory (works on images whose WAD was moved to the end by
+    iso_build, which pycdlib refuses to open); other paths go through pycdlib."""
+    if inner_path.count("/") == 1:
+        from thaw_sandbox.iso_build import find_record
+        with open(iso_path, "rb") as f:
+            _, lba, size = find_record(f, inner_path[1:])
+        return lba * SECTOR, size
     iso = pycdlib.PyCdlib()
     iso.open(iso_path)
     try:
@@ -45,6 +53,11 @@ def patch_in_place(iso_path: str, abs_offset: int, data: bytes):
 
 
 def read_file(iso_path: str, inner_path: str) -> bytes:
+    if inner_path.count("/") == 1:
+        off, size = file_extent(iso_path, inner_path)
+        with open(iso_path, "rb") as f:
+            f.seek(off)
+            return f.read(size)
     iso = pycdlib.PyCdlib()
     iso.open(iso_path)
     try:

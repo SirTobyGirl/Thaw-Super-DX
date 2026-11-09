@@ -18,7 +18,12 @@ HED = "_workspace/stage/DATAP.HED"
 D = "_workspace/datap/"
 
 
-def main(base, out, src_dir, code, z, tex_mode="thug2", parts=("tex", "geom", "col", "nqb"), nqb_file=None, no_create=()):
+def build_zone(src_dir, code, z, tex_mode="thug2", parts=("tex", "geom", "col", "nqb"), nqb_file=None, no_create=(),
+               na_zone=None):
+    """Convert THUG2 level CODE into a copy of THAW zone z's PAK; returns the new zone bytes.
+    The node array (and its sorted index) is named after na_zone (default z) - the engine looks it up by the
+    level's zone name."""
+    na_zone = na_zone or z
     zpath = f"{D}worlds/worldzones/{z}/{z}.pak.ps2"
     zb = open(zpath, "rb").read()
     tab = zone.entries(zb)
@@ -37,7 +42,7 @@ def main(base, out, src_dir, code, z, tex_mode="thug2", parts=("tex", "geom", "c
     else:
         qb, src = C.convert(open(f"{src_dir}/{code}.qb", "rb").read(), "x")
         fcrc, items = F.read(qb)
-    old_na, new_na = Q.qbcrc(f"{code}_NodeArray"), Q.qbcrc(f"{z}_NodeArray")
+    old_na, new_na = Q.qbcrc(f"{code}_NodeArray"), Q.qbcrc(f"{na_zone}_NodeArray")
     for it in items:
         if it.name == old_na:
             it.name = new_na
@@ -71,8 +76,8 @@ def main(base, out, src_dir, code, z, tex_mode="thug2", parts=("tex", "geom", "c
         na = next(it for it in items if it.name == new_na).value
         NAME = Q.qbcrc("name")
         pairs = sorted((v.crc, i) for i, s_ in enumerate(na.items) for n, v in s_.items if n == NAME)
-        items += [F.Item(12, Q.qbcrc(f"{z}_NodeArray_SortedNames"), QD.Array(13, [QD.Name(c) for c, _ in pairs])),
-                        F.Item(12, Q.qbcrc(f"{z}_NodeArray_SortedIndices"), QD.Array(1, [i for _, i in pairs]))]  # at the end, like THAW
+        items += [F.Item(12, Q.qbcrc(f"{na_zone}_NodeArray_SortedNames"), QD.Array(13, [QD.Name(c) for c, _ in pairs])),
+                        F.Item(12, Q.qbcrc(f"{na_zone}_NodeArray_SortedIndices"), QD.Array(1, [i for _, i in pairs]))]  # at the end, like THAW
         print(f"sorted node index: {len(pairs)} named nodes")
     nqb = F.write(orig_crc, items)
     geom = open(f"{src_dir}/{code}.geom.ps2", "rb").read()
@@ -222,7 +227,11 @@ def main(base, out, src_dir, code, z, tex_mode="thug2", parts=("tex", "geom", "c
             "nqb": orig_nqb.pos, "scripts": se.pos, "peds": pe.pos}
     rep = {k: v for k, v in rep.items() if k in {keep[p] for p in parts}}
     print("replacing:", ", ".join(parts), "| tex:", tex_mode)
-    new_zone = zone.rebuild(zb, rep)
+    return zone.rebuild(zb, rep)
+
+
+def main(base, out, src_dir, code, z, tex_mode="thug2", parts=("tex", "geom", "col", "nqb"), nqb_file=None, no_create=()):
+    new_zone = build_zone(src_dir, code, z, tex_mode, parts, nqb_file, no_create)
     # WAD slot check
     hed_b = bytearray(open(HED, "rb").read())
     ents, _ = wad.parse_hed(bytes(hed_b))

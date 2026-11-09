@@ -5,7 +5,7 @@ import os
 import sys
 
 BUILD = os.path.join(os.path.dirname(__file__), "..", "_workspace", "build")
-BASE = {"sandbox.iso"}
+BASE = {"sandbox.iso", "grow.iso"}
 
 
 def rotate(keep=3):

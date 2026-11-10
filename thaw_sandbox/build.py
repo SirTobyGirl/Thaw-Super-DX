@@ -12,7 +12,7 @@ import os
 import shutil
 import subprocess
 
-from thaw_sandbox import iso_build, iso_manager as I, level_convert, level_register, qb_parser as Q, sandbox_patch
+from thaw_sandbox import elf_patch, iso_build, iso_manager as I, level_convert, level_register, qb_parser as Q, sandbox_patch
 from thaw_sandbox import sources, thug2_qb
 from thaw_sandbox.disc import Disc
 from thaw_sandbox.zone_rename import rename_zone
@@ -118,6 +118,7 @@ def build(thaw, wanted, out, work_dir, level_scripts=True, keep_duplicates=False
     log("copying THAW and making room ...")
     iso_build.build(thaw_iso, out)
     sandbox_patch.apply(out)
+    elf_patch.apply(out)  # rail tables unpack in place (no main-heap buffer)
     d = Disc(out)
     nt = names_table(d)
     taken = {e.name.lower().split("\\")[3] for e in d.ents if e.name.lower().startswith("\\worlds\\worldzones\\")

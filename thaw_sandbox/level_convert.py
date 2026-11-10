@@ -11,7 +11,7 @@ The result still carries the template's internal names; zone_rename.rename_zone 
 import struct
 
 from thaw_sandbox import col as CL, convert_thug2 as C, geom as GM, pak, qb_data as QD, qb_file as F
-from thaw_sandbox import qb_parser as Q, thaw_tex as TT, thug2_tex as T2, zone
+from thaw_sandbox import gaps, qb_parser as Q, rails, thaw_tex as TT, thug2_tex as T2, zone
 
 # THUG2 node classes whose models do not exist in THAW: keep the nodes (link indices) but stop them spawning
 NEUTRALISE = ("LevelObject", "LevelLight", "Pedestrian", "Vehicle", "ParticleObject", "GameObject",
@@ -21,6 +21,10 @@ RENAME_KEYS = {"Position": "Pos"}
 NODE_FILTER = None
 SCRIPT_FILTER = None
 GREY = struct.pack("<16I", *([0x80606060] * 16))
+# Largest zone PAK proven safe: THAW sizes a buffer from the biggest zone file on the disc, and above about
+# 10.5 MB (THUG San Diego, 10.78 MB) THAW's own open-world levels (Hollywood, Santa Monica, ...) hang while
+# loading. Moscow at 10,500,592 bytes is fine. Bigger zones lose the top mip level of their largest textures.
+MAX_ZONE_BYTES = 10_400_000
 log = print
 
 
@@ -39,9 +43,10 @@ def _named(zb, tab):
             for x in tab if struct.unpack_from("<I", zb, x.pos + 28)[0] & 0x20}
 
 
-def convert_nodes(qb_bytes, code, na_zone, orig_crc, flip_z=False, neutralise=(), trigger_classes=None):
+def convert_nodes(qb_bytes, code, na_zone, orig_crc, flip_z=False, neutralise=(), trigger_classes=None,
+                  with_rails=False):
     """THUG2 node file -> THAW node file (renamed node array, inlined includes, neutralised THUG2-only classes,
-    sorted name index)."""
+    sorted name index); with_rails: -> (node file, rail table built from the converted nodes)."""
     _, items = F.read(C.convert(qb_bytes, "x")[0])
     old_na, new_na = {Q.qbcrc(f"{code}_NodeArray"), Q.qbcrc("NodeArray")}, Q.qbcrc(f"{na_zone}_NodeArray")
     for it in items:  # THUG2: <code>_NodeArray, THPS4: NodeArray
@@ -87,17 +92,46 @@ def convert_nodes(qb_bytes, code, na_zone, orig_crc, flip_z=False, neutralise=()
     pairs = sorted((v.crc, i) for i, s in enumerate(na.items) for n, v in s.items if n == NAME)
     items += [F.Item(12, Q.qbcrc(f"{na_zone}_NodeArray_SortedNames"), QD.Array(13, [QD.Name(c) for c, _ in pairs])),
               F.Item(12, Q.qbcrc(f"{na_zone}_NodeArray_SortedIndices"), QD.Array(1, [i for _, i in pairs]))]
-    return F.write(orig_crc, items)
+    out = F.write(orig_crc, items)
+    if with_rails:
+        return out, rails.build(na.items, {it.name: it.value for it in items if isinstance(it.value, QD.Struct)})
+    return out
 
 
-def convert_textures_and_geometry(tex_bytes, geom_bytes, resolve_refs):
-    """THUG2 texture dictionary + geometry -> THAW ones (bound to each other)."""
+def _halvable(src):
+    return src.psm in (0x13, 0x14) and src.width >= 16 and src.height >= 16 and src.mips
+
+
+def _half(src):
+    """Top level at half size: the next mip level when there is one, else every other pixel (T8 / T4)."""
+    if len(src.mips) >= 2:
+        return src.mips[1:5]
+    w, h, m = src.width, src.height, src.mips[0]
+    if src.psm == 0x13:
+        return [bytes(m[y * w + x] for y in range(0, h, 2) for x in range(0, w, 2))]
+    px = [m[(y * w + x) >> 1] >> (4 * (x & 1)) & 0xF for y in range(0, h, 2) for x in range(0, w, 2)]
+    return [bytes(a | b << 4 for a, b in zip(px[0::2], px[1::2]))]
+
+
+def convert_textures_and_geometry(tex_bytes, geom_bytes, resolve_refs, budget=0):
+    """THUG2 texture dictionary + geometry -> THAW ones (bound to each other).
+    budget: bytes to save by dropping the top mip level of the largest textures (0: keep all)."""
     _, t2 = T2.parse(tex_bytes)
     refs = resolve_refs(t2)
+    srcs = [(x, x if x.mips else refs.get(x.crc)) for x in t2]
+    halve, saved = set(), 0
+    for i in sorted((i for i, (_, s) in enumerate(srcs) if s is not None and _halvable(s)),
+                    key=lambda i: -len(srcs[i][1].mips[0])):
+        if saved >= budget:
+            break
+        halve.add(i)
+        saved += len(srcs[i][1].mips[0])
     new = []
-    for x in t2:
-        src = x if x.mips else refs.get(x.crc)
-        if src is not None:  # header-only entries reference a texture defined elsewhere: copy its pixels
+    for i, (x, src) in enumerate(srcs):
+        if src is not None and i in halve:
+            new.append(TT.NewTexture(x.crc, src.width // 2, src.height // 2, src.psm, src.cpsm, src.clut,
+                                     _half(src), group=x.group))
+        elif src is not None:  # header-only entries reference a texture defined elsewhere: copy its pixels
             new.append(TT.NewTexture(x.crc, src.width, src.height, src.psm, src.cpsm, src.clut, src.mips[:4],
                                      group=x.group))
         else:
@@ -114,6 +148,7 @@ def convert_textures_and_geometry(tex_bytes, geom_bytes, resolve_refs):
     geom, st["untextured leaves dropped"] = GM.drop_untextured(geom)
     geom, _ = GM.bind_textures(geom, tex)
     st["textures"] = len(new)
+    st["textures halved"] = len(halve)
     st["texture references resolved"] = len(refs)
     return tex, geom, st
 
@@ -124,11 +159,16 @@ def convert_level(template_zone, files, code, zone_name, resolve_refs, template=
     big = _biggest(zb, tab)
     p0 = pak.data_pos(big[".nqb"], 0)
     orig_crc, _ = F.read(zb[p0:p0 + big[".nqb"].size])
-    nqb = convert_nodes(files["qb"], code, zone_name, orig_crc, flip_z=files.get("flip_z", False),
-                        neutralise=files.get("neutralise", ()), trigger_classes=files.get("trigger_classes"))
+    nqb, rnb = convert_nodes(files["qb"], code, zone_name, orig_crc, flip_z=files.get("flip_z", False),
+                             neutralise=files.get("neutralise", ()), trigger_classes=files.get("trigger_classes"),
+                             with_rails=True)
     tex, geom, st = convert_textures_and_geometry(files["tex"], files["geom"], resolve_refs)
     rep = {big[".tex"].pos: tex, big[".geom"].pos: geom, big[".col"].pos: CL.thug2_to_thaw(files["col"]),
            big[".nqb"].pos: nqb}
+    # rails come from the zone's rail table, not from the node array: the template's would give Kyoto's rails
+    for e in tab:
+        if struct.unpack_from("<I", zb, e.pos)[0] == rails.RNB_TYPE and e.size < 0x40000000:
+            rep[e.pos] = rnb
     # level scripts: the template's script names stay (emptied; they are renamed to the new zone later) plus the
     # THUG2 level's own scripts (its nodes name them as trigger scripts: gaps etc.)
     named = _named(zb, tab)
@@ -147,6 +187,12 @@ def convert_level(template_zone, files, code, zone_name, resolve_refs, template=
             extra = SCRIPT_FILTER(extra)
         sitems += extra
     rep[se.pos] = F.write(scrc, sitems)
+    # gap checklist: the template's names Kyoto's gaps under z_ja; the level's own come from its EndGap calls
+    gap_list = gaps.collect(sitems) if level_scripts else []
+    st["gaps"] = len(gap_list)
+    for e in tab:
+        if struct.unpack_from("<I", zb, e.pos)[0] == gaps.GAP_TYPE and e.size < 0x40000000:
+            rep[e.pos] = gaps.build(gap_list, zone_name)
     pe = named[f"{template}_peds.qb.ps2"]  # template peds would walk the template's paths: none
     pp = pak.data_pos(pe, 0)
     pcrc, pitems = F.read(zb[pp:pp + pe.size])
@@ -154,4 +200,13 @@ def convert_level(template_zone, files, code, zone_name, resolve_refs, template=
         if it.name == Q.qbcrc(f"{template}_skate_peds"):
             it.value.items = []
     rep[pe.pos] = F.write(pcrc, pitems)
-    return zone.rebuild(zb, rep), st
+    out, budget = zone.rebuild(zb, rep), 0
+    for _ in range(4):  # over the size cap: halve the largest textures until it fits
+        if len(out) <= MAX_ZONE_BYTES:
+            break
+        budget += len(out) - MAX_ZONE_BYTES + 0x8000
+        tex, geom, st2 = convert_textures_and_geometry(files["tex"], files["geom"], resolve_refs, budget)
+        st.update(st2)
+        rep[big[".tex"].pos], rep[big[".geom"].pos] = tex, geom
+        out = zone.rebuild(zb, rep)
+    return out, st

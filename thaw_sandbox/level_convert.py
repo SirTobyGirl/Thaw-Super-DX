@@ -38,7 +38,7 @@ def _named(zb, tab):
             for x in tab if struct.unpack_from("<I", zb, x.pos + 28)[0] & 0x20}
 
 
-def convert_nodes(qb_bytes, code, na_zone, orig_crc, flip_z=False, neutralise=()):
+def convert_nodes(qb_bytes, code, na_zone, orig_crc, flip_z=False, neutralise=(), trigger_classes=None):
     """THUG2 node file -> THAW node file (renamed node array, inlined includes, neutralised THUG2-only classes,
     sorted name index)."""
     _, items = F.read(C.convert(qb_bytes, "x")[0])
@@ -74,6 +74,12 @@ def convert_nodes(qb_bytes, code, na_zone, orig_crc, flip_z=False, neutralise=()
         s.items = [(k, v) for k, v in s.items if k != MODEL and not (k == 0 and getattr(v, "crc", None) == CAS)]
         if c not in keep_class:
             s.items = [(k, QD.Name(WP) if k == CLS else v) for k, v in s.items]
+    if trigger_classes is not None:  # TriggerScript kept only on these node classes (gap triggers: rails, geometry)
+        keep_t, TS = {Q.qbcrc(c) for c in trigger_classes}, Q.qbcrc("TriggerScript")
+        CLS_ = Q.qbcrc("Class")
+        for s in na.items:
+            if next((getattr(v, "crc", None) for k, v in s.items if k == CLS_), None) not in keep_t:
+                s.items = [(k, v) for k, v in s.items if k != TS]
     if NODE_FILTER:  # bisection hook (harness): keep only some nodes
         na.items = NODE_FILTER(na.items)
     NAME = Q.qbcrc("name")  # THAW node files carry a sorted name index
@@ -118,7 +124,7 @@ def convert_level(template_zone, files, code, zone_name, resolve_refs, template=
     p0 = pak.data_pos(big[".nqb"], 0)
     orig_crc, _ = F.read(zb[p0:p0 + big[".nqb"].size])
     nqb = convert_nodes(files["qb"], code, zone_name, orig_crc, flip_z=files.get("flip_z", False),
-                        neutralise=files.get("neutralise", ()))
+                        neutralise=files.get("neutralise", ()), trigger_classes=files.get("trigger_classes"))
     tex, geom, st = convert_textures_and_geometry(files["tex"], files["geom"], resolve_refs)
     rep = {big[".tex"].pos: tex, big[".geom"].pos: geom, big[".col"].pos: CL.thug2_to_thaw(files["col"]),
            big[".nqb"].pos: nqb}
@@ -132,7 +138,7 @@ def convert_level(template_zone, files, code, zone_name, resolve_refs, template=
     for it in sitems:
         if it.vtype == 7:
             it.value = empty
-    if level_scripts:
+    if level_scripts and files.get("scripts"):
         have = {it.name for it in sitems}
         _, extra = F.read(C.convert(files["scripts"], "x")[0])
         sitems += [it for it in extra if it.name not in have]

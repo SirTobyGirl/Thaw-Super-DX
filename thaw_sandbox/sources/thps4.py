@@ -14,7 +14,10 @@ from thaw_sandbox.sources.thug2 import _hed
 
 GAME = "THPS4"
 SERIALS = ("SLUS_205.04",)
-LEVELS = ("sch", "sf2", "alc", "kon", "jnk", "lon", "zoo", "cnv", "hof")
+# Carnival (cnv) is left out: its zone loads but the game returns to the level list (even with empty scripts)
+LEVELS = ("sch", "sf2", "alc", "kon", "jnk", "lon", "zoo", "hof")
+# levels whose own scripts stop the load from finishing (kept playable without them: no gap triggers yet)
+NO_SCRIPTS = {"alc"}
 DISPLAY = {"hof": "Chicago"}  # the level struct calls it Hoffman (the factory); the game shows Chicago
 ZONE_HINTS = {"sch": "z_co", "sf2": "z_s4", "alc": "z_al", "kon": "z_ko", "jnk": "z_sy", "lon": "z_lo",
               "zoo": "z_zo", "cnv": "z_cv", "hof": "z_ch"}
@@ -73,13 +76,17 @@ class Source:
         col = read_pre(self.read(f"\\pre\\{code}col.pre"))[f"levels\\{code}\\{code}.col.ps2"]
         _, textures = T2.parse(tex)
         geom, _ = thps4_geom.to_thug2(self.read(f"\\levels\\{code}\\{code}.geom.ps2"), textures)
+        scripts = b"" if code in NO_SCRIPTS else thps4_qb.to_thug2(self.read(f"\\levels\\{code}\\{code}_scripts.qb"))
         return {"geom": geom, "col": thps4_col.to_v10(col), "tex": tex,
                 "qb": thps4_qb.to_thug2(self.read(f"\\levels\\{code}\\{code}.qb")),
-                "scripts": thps4_qb.to_thug2(self.read(f"\\levels\\{code}\\{code}_scripts.qb")),
+                "scripts": scripts,
                 "flip_z": True,
                 # THPS4 proximity nodes are radius spheres (THUG2/THAW: geometry boxes); the load never finished
                 # with them. They only switch ambient sounds.
-                "neutralise": ("ProximNode",)}  # node positions: THPS4 has Z mirrored (restarts land on collision only flipped)
+                "neutralise": ("ProximNode",),
+                # restart/waypoint trigger scripts run on spawn (THPS4 goal logic); Alcatraz and London never
+                # finished loading with them. Gaps live on rails and level geometry.
+                "trigger_classes": ("RailNode", "LevelGeometry")}  # node positions: THPS4 has Z mirrored (restarts land on collision only flipped)
 
     def resolve_texture_refs(self, textures):
         return {}  # THPS4 dictionaries carry all their pixels

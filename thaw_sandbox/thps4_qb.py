@@ -14,6 +14,7 @@ from thaw_sandbox.qb_tokens import tokenize
 
 RANDOM = (47, 55, 64, 65)
 IF, ELSE, ELSEIF, ENDIF, FASTIF, FASTELSE = 37, 38, 39, 40, 71, 72
+SWITCH, ENDSWITCH, CASE, DEFAULT, SHORTJUMP = 60, 61, 62, 63, 73
 
 
 def to_thug2(code: bytes, random_entry: int = 4) -> bytes:
@@ -35,6 +36,26 @@ def to_thug2(code: bytes, random_entry: int = 4) -> bytes:
             match[stack.pop()] = t.off
         elif t.id == ELSEIF:
             raise ValueError("elseif not handled")
+    # switches: THAW (like THUG2) compiles each case/default with a short jump to the next clause and ends each
+    # case body with a short jump past endswitch; THPS4/THUG streams have neither (a THUG Manhattan goal script
+    # and Moscow's setup hung the load). Offsets: target - (opcode + 1), as fast ifs.
+    sw_stack, clause_of, sw_end_of = [], {}, {}
+    has_jumps = any(t.id == SHORTJUMP for t in toks)
+    for t in toks:
+        if has_jumps:
+            break
+        if t.id == SWITCH:
+            sw_stack.append({"clauses": [], "end": None})
+        elif t.id in (CASE, DEFAULT) and sw_stack:
+            sw = sw_stack[-1]
+            clause_of[t.off] = (sw, len(sw["clauses"]))
+            sw["clauses"].append(t)
+        elif t.id == ENDSWITCH and sw_stack:
+            sw = sw_stack.pop()
+            sw["end"] = t
+            sw_end_of[t.off] = sw
+    clause_pos = {}  # old clause/endswitch offset -> new offset of that token
+    jumps = []  # (new opcode offset, kind, data)
     for t in toks:
         pos[t.off] = len(out)
         if t.id == 2:
@@ -54,6 +75,22 @@ def to_thug2(code: bytes, random_entry: int = 4) -> bytes:
             out += b"\x2e"
             fixups.append((len(out), t.end + struct.unpack_from("<i", code, t.off + 1)[0]))
             out += b"\0\0\0\0"
+        elif t.off in clause_of:
+            sw, k = clause_of[t.off]
+            if k and sw["clauses"][k - 1].id == CASE:  # end of the previous case body: jump past endswitch
+                jumps.append((len(out), "end", sw))
+                out += b"\x49\0\0"
+            clause_pos[t.off] = len(out)
+            out += bytes([t.id])
+            jumps.append((len(out), "next", (sw, k)))
+            out += b"\x49\0\0"
+        elif t.off in sw_end_of:
+            sw = sw_end_of[t.off]
+            if sw["clauses"] and sw["clauses"][-1].id == CASE:
+                jumps.append((len(out), "end", sw))
+                out += b"\x49\0\0"
+            clause_pos[t.off] = len(out)
+            out += bytes([t.id])
         elif t.id in (IF, ELSE) and t.off in match:
             ifs.append((len(out), match[t.off]))
             out += bytes([FASTIF if t.id == IF else FASTELSE]) + b"\0\0"
@@ -63,6 +100,14 @@ def to_thug2(code: bytes, random_entry: int = 4) -> bytes:
     pos[len(code)] = len(out)
     for field, target in fixups:
         struct.pack_into("<i", out, field, pos[target] - (field + 4))
+    for op, kind, data in jumps:
+        if kind == "end":
+            target = clause_pos[data["end"].off] + 1
+        else:
+            sw, k = data
+            nxt = sw["clauses"][k + 1] if k + 1 < len(sw["clauses"]) else sw["end"]
+            target = clause_pos[nxt.off]
+        struct.pack_into("<h", out, op + 1, target - (op + 1))
     for op, m in ifs:
         off = end[m] - (op + 1)
         assert off < 0x8000, "if block too long for a fast if"

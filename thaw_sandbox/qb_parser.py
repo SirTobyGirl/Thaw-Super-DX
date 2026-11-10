@@ -37,7 +37,9 @@ class NameTable:
 
     def add_file(self, path: str):
         with open(path, "rb") as f:
-            data = f.read()
+            self.add_bytes(f.read())
+
+    def add_bytes(self, data: bytes):
         for m in re.finditer(rb"[\x20-\x7e]{3,200}", data):
             s = m.group().decode("latin1")
             for t in {s} | set(re.split(r"[\\/ .,:;=()\[\]\"'%]+", s)):

@@ -1,7 +1,17 @@
 THAW Super DX - using the tool
 ==============================
 You need: your own Tony Hawk's American Wasteland (NTSC-U, .iso or .chd) and the discs you want levels from
-(supported: THUG2 SLUS-20965, THPS4 SLUS-20504). Python 3 with the packages in .venv; chdman for .chd input.
+(supported: THUG2 SLUS-20965, THUG SLUS-20731, THPS4 SLUS-20504). Python 3 with the packages in .venv; chdman for .chd input.
+
+The window (pick each disc, shrink or not, Build):
+
+  ./thaw-super-dx.sh            (or: python -m thaw_sandbox)
+
+One row per game: American Wasteland (required), then Underground 2, Underground and Pro Skater 4 - fill in the
+games you want levels from and leave the rest empty. Each disc is checked when chosen (a disc in the wrong row is
+named). "Shrink the image" is on by default; "emulator-ready folder" puts the image next to a PCSX2 launcher.
+
+Command line:
 
   python -m thaw_sandbox list  "THPS4.iso"                      # levels a disc offers (codes + names)
   python -m thaw_sandbox build --thaw "THAW.chd" \

@@ -48,7 +48,7 @@ def _drop(struct_v, key):
     struct_v.items = [(k, v) for k, v in struct_v.items if k != H(key)]
 
 
-def edit_qbs(src, zn, display, zone_size, ped_size, trim_net_zones=False):
+def edit_qbs(src, zn, display, zone_size, ped_size, trim_net_zones=False, setup=None):
     ZN = zn.upper()
     nt = Q.NameTable.load("_workspace/qbwork/names.pkl")
 
@@ -67,7 +67,7 @@ def edit_qbs(src, zn, display, zone_size, ped_size, trim_net_zones=False):
         _set(s, "name", display)
         _set(s, "Level", ZN)
         _set(s, "goals_script", f"{ZN}_Goals")  # the zone's scripts are renamed z_ja -> zn (zone_rename)
-        _set(s, "setup_script", f"{ZN}_Setup")
+        _set(s, "setup_script", setup or f"{ZN}_Setup")  # THUG2's own <code>_setup when the level has one
         if os.environ.get("NO_PEDS"):  # experiment: with pedlife off the load never finished
             _set(s, "pedlife_allowed", 0)
             _drop(s, "classic_mode_navmesh")
@@ -180,7 +180,14 @@ def add_one(d, code, zn, display):
         open(os.path.join(tmp, "in.pak"), "wb").write(d.read("\\pak\\qb.pak.ps2"))
         open(os.path.join(tmp, "in.pab"), "wb").write(d.read("\\pak\\qb.pab.ps2"))
         pak.unpack(os.path.join(tmp, "in.pak"), os.path.join(tmp, "in.pab"), src)
-        edit_qbs(src, zn, display, len(zone), len(ped), trim_net_zones=bool(os.environ.get("TRIM_NET")))
+        setup = None
+        if not os.environ.get("NO_LEVEL_SCRIPTS"):
+            from thaw_sandbox import thug2_qb
+            sq = thug2_qb.parse(open(f"_workspace/thug2/{code}/{code}_scripts.qb", "rb").read())
+            if H(f"{code}_setup") in sq.scripts:
+                setup = f"{code}_setup"
+        edit_qbs(src, zn, display, len(zone), len(ped), trim_net_zones=bool(os.environ.get("TRIM_NET")), setup=setup)
+        print(f"  setup script: {setup or 'none (empty ' + zn.upper() + '_Setup)'}")
         old_pak, old_pab = d.read("\\pak\\qb.pak.ps2"), d.read("\\pak\\qb.pab.ps2")
         new_pak, new_pab = pak.repack_compact(old_pak, old_pab, src)
         print(f"  qb.pab: {len(old_pab)} -> {len(new_pab)} bytes")

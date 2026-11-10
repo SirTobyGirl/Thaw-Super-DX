@@ -47,6 +47,25 @@ def build_zone(src_dir, code, z, tex_mode="thug2", parts=("tex", "geom", "col", 
         if it.name == old_na:
             it.name = new_na
     assert any(it.name == new_na for it in items), "node array not found"
+    # expand node includes: THUG2 nodes include shared field sets by bare name (ncomp_* structs, e.g.
+    # ncomp_Waypoint_1599 = {CreatedAtStart}); inline them so every node is self-contained
+    structs = {it.name: it.value for it in items if isinstance(it.value, QD.Struct)}
+
+    def expand(sv, depth=0):
+        out = []
+        for k, v in sv.items:
+            if k == 0 and isinstance(v, QD.Name) and v.crc in structs and depth < 4:
+                out += expand(structs[v.crc], depth + 1)
+            else:
+                out.append((k, v))
+        return out
+    na_v = next(it for it in items if it.name == new_na).value
+    n_inc = 0
+    for node in na_v.items:
+        before = len(node.items)
+        node.items = expand(node)
+        n_inc += before != len(node.items)
+    print(f"node includes expanded in {n_inc} nodes")
     if no_create:  # experiment: neutralise THUG2-only node classes (indices kept so links still resolve)
         na = next(it for it in items if it.name == new_na).value
         CLS, CAS, MODEL, WP = Q.qbcrc("Class"), Q.qbcrc("CreatedAtStart"), Q.qbcrc("model"), Q.qbcrc("Waypoint")

@@ -19,7 +19,7 @@ SERIALS = ("SLUS_205.04",)
 LEVELS = ("sch", "sf2", "alc", "kon", "jnk", "lon", "zoo", "cnv", "hof")
 EXTRA = ()  # convertible but not in the default list (can be asked for by code)
 # levels whose own scripts stop the load from finishing (kept playable without them: no gap triggers yet)
-NO_SCRIPTS = {"alc"}
+NO_SCRIPTS = set()
 DISPLAY = {"hof": "Chicago"}  # the level struct calls it Hoffman (the factory); the game shows Chicago
 ZONE_HINTS = {"sch": "z_co", "sf2": "z_s4", "alc": "z_al", "kon": "z_ko", "jnk": "z_sy", "lon": "z_lo",
               "zoo": "z_zo", "cnv": "z_cv", "hof": "z_ch"}
@@ -34,15 +34,17 @@ def detect(iso):
 
 
 def read_pre(b):
-    """PRE archive -> {lower-case name: bytes}."""
-    _total, _ver, count = struct.unpack_from("<IIi", b, 0)
+    """PRE archive -> {lower-case name: bytes}. Version 2 (THPS3/4); version 3 (THUG) adds a u32 name checksum
+    after the name length."""
+    _total, ver, count = struct.unpack_from("<IIi", b, 0)
+    hdr = 16 if ver & 0xFFFF >= 3 else 12
     pos, out = 12, {}
     for _ in range(count):
         size, csize, nlen = struct.unpack_from("<3I", b, pos)
-        name = b[pos + 12:pos + 12 + nlen].split(b"\0")[0].decode("latin1").lower()
-        data = b[pos + 12 + nlen:pos + 12 + nlen + (csize or size)]
+        name = b[pos + hdr:pos + hdr + nlen].split(b"\0")[0].decode("latin1").lower()
+        data = b[pos + hdr + nlen:pos + hdr + nlen + (csize or size)]
         out[name] = lzss.decompress(data, size) if csize else data
-        pos += 12 + nlen + (((csize or size) + 3) & ~3)
+        pos += hdr + nlen + (((csize or size) + 3) & ~3)
     return out
 
 

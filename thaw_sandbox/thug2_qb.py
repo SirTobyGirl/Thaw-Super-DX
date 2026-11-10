@@ -77,6 +77,9 @@ class _P:
             if tk.id == 4:
                 self.next()
                 return s
+            if tk.id == 9:  # stray comma between struct items (THUG's Manhattan nodes)
+                self.next()
+                continue
             if tk.id == 22:
                 self.next()
                 nt = self.peek()

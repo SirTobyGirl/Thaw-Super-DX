@@ -19,6 +19,7 @@ NEUTRALISE = ("LevelObject", "LevelLight", "Pedestrian", "Vehicle", "ParticleObj
 # THPS4 node field names -> the THUG2/THAW ones
 RENAME_KEYS = {"Position": "Pos"}
 NODE_FILTER = None
+SCRIPT_FILTER = None
 GREY = struct.pack("<16I", *([0x80606060] * 16))
 log = print
 
@@ -141,7 +142,10 @@ def convert_level(template_zone, files, code, zone_name, resolve_refs, template=
     if level_scripts and files.get("scripts"):
         have = {it.name for it in sitems}
         _, extra = F.read(C.convert(files["scripts"], "x")[0])
-        sitems += [it for it in extra if it.name not in have]
+        extra = [it for it in extra if it.name not in have]
+        if SCRIPT_FILTER:  # bisection hook (harness)
+            extra = SCRIPT_FILTER(extra)
+        sitems += extra
     rep[se.pos] = F.write(scrc, sitems)
     pe = named[f"{template}_peds.qb.ps2"]  # template peds would walk the template's paths: none
     pp = pak.data_pos(pe, 0)

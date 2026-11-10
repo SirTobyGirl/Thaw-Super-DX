@@ -42,5 +42,15 @@ if os.environ.get("NODE_KEEP"):  # keep only these node classes; links dropped (
         print(f"nodes kept: {len(out)} of {len(nodes)}")
         return out
     L.NODE_FILTER = flt
+if os.environ.get("SCRIPT_RANGE"):  # keep only level scripts a..b-1 (records in file order); others dropped
+    a_, b_ = map(int, os.environ["SCRIPT_RANGE"].split(":"))
+
+    def sflt(items):
+        print(f"level scripts kept {a_}..{b_} of {len(items)}")
+        return items[a_:b_]
+    L.SCRIPT_FILTER = sflt
+if os.environ.get("ALL_SCRIPTS"):  # lift a source's per-level no-scripts exceptions
+    from thaw_sandbox.sources import thps4
+    thps4.NO_SCRIPTS.clear()
 L.convert_level = patched
 B.build(base, [(disc, [code])], out, "_workspace/e2e")

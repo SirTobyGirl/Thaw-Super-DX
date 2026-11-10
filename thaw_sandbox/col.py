@@ -29,3 +29,19 @@ def thug2_to_thaw(b: bytes, cell: float = 1500.0) -> bytes:
     rows = max(1, min(64, math.ceil((mx[2] - mn[2]) / cell)))
     sup = struct.pack("<4I8f", 0, 0, cols, rows, *mn, 1.0, *mx, 1.0)
     return b[:32] + sup + b[32:]
+
+
+def v9_to_v10(b: bytes) -> bytes:
+    """THUG (version 9) -> THUG2 layout (10): v9 lacks the one-byte-per-large-face block between the faces and the
+    BSP (checked on New Jersey: the BSP section then parses to the file's last byte)."""
+    ver, no, nv, nlf, nsf, nlv, nsv, _ = struct.unpack_from("<8I", b, 0)
+    assert ver == 9, ver
+    o = (32 + 64 * no + 15) & ~15
+    o += nlv * 12 + nsv * 6 + nv
+    o = (o + 3) & ~3
+    o += nlf * 10 + nsf * 8
+    head = bytearray(b[:o])
+    struct.pack_into("<I", head, 0, 10)
+    head += bytes(-len(head) % 2) + bytes(nlf)
+    head += bytes(-len(head) % 4)
+    return bytes(head) + b[(o + 3) & ~3:]

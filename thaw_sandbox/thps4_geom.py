@@ -1,4 +1,4 @@
-"""THPS4 (PS2) level geometry -> THUG2 form, which geom.thug2_to_thaw then takes to THAW.
+"""THPS4 and THUG (PS2) level geometry -> THUG2 form, which geom.thug2_to_thaw then takes to THAW.
 
 Same node tree as THUG2 (geom.py). Differences found on School (sch.geom.ps2):
   * UVs are V2_16 unpacks (cmd 0x65); THAW's batch layouts only use V2_32 (0x64). Both hold 12-bit fixed
@@ -111,7 +111,7 @@ def to_thug2(b: bytes, textures) -> tuple[bytes, dict]:
         if n[7] & G.LEAF:
             w[8] = where[n[8]]
             t = _tex0(b, K + n[8])
-            w[17] = tex_of.get(n[11], {}).get(t, 0)
+            w[17] = n[17] or tex_of.get(n[11], {}).get(t, 0)  # THUG leaves already name their texture
             stats["leaves"] += 1
             stats["texture matched"] += bool(w[17])
         else:

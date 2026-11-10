@@ -59,6 +59,8 @@ class _P:
             return struct.unpack_from("<3f", self.c, tk.off + 1)
         if t == 31:
             return struct.unpack_from("<2f", self.c, tk.off + 1)
+        if t == 45:  # <param> reference inside data (THPS4 node templates): kept as the plain name
+            return Name(self.u32(self.next()))
         if t == 10:  # unary minus before a number
             v = self.value()
             return -v

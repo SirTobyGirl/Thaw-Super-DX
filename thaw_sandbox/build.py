@@ -134,7 +134,8 @@ def build(thaw, wanted, out, work_dir, level_scripts=True):
             d.add(f"\\worlds\\worldzones\\{zn}\\{zn}ped.pak.ps2", ped)
             d.add(f"\\sounds\\pak\\{zn}_sfx.pak.ps2", sfx)
             setup = None
-            if level_scripts and Q.qbcrc(f"{code}_setup") in thug2_qb.parse(files["scripts"]).scripts:
+            if level_scripts and getattr(s, "USE_SETUP", True) and \
+                    Q.qbcrc(f"{code}_setup") in thug2_qb.parse(files["scripts"]).scripts:
                 setup = f"{code}_setup"
             new_pak, new_pab = level_register.register(d.read("\\pak\\qb.pak.ps2"), d.read("\\pak\\qb.pab.ps2"),
                                                        zn, display, len(zb), len(ped), setup, tmp_dir=work_dir)

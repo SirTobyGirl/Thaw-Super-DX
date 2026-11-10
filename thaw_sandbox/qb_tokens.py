@@ -33,7 +33,8 @@ class Tok:
     end: int  # offset just past this token
 
 
-def tokenize(code: bytes) -> list[Tok]:
+def tokenize(code: bytes, random_entry: int = 6) -> list[Tok]:
+    """random_entry: bytes per random choice (THUG2/THAW: u16 weight + u32 offset; THPS4: u32 offset only)."""
     out, i, n = [], 0, len(code)
     while i < n:
         t = code[i]
@@ -59,7 +60,7 @@ def tokenize(code: bytes) -> list[Tok]:
         elif t == 43:
             j = code.index(b"\0", i + 5) + 1
         elif t in (47, 55, 64, 65):
-            j = i + 5 + 6 * struct.unpack_from("<I", code, i + 1)[0]
+            j = i + 5 + random_entry * struct.unpack_from("<I", code, i + 1)[0]
         elif t in (71, 72, 73):
             j = i + 3
         else:

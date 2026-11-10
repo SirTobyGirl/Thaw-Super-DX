@@ -1,4 +1,4 @@
-"""Reader for THUG2 PS2 texture dictionaries (.tex.ps2, version 5).
+"""Reader for THUG2 PS2 texture dictionaries (.tex.ps2, version 5; THPS4 version 4: same without the leading zero word).
 
 file    = u32 version (5) | u32 group count | u32 texture count | groups...
 group   = u32 crc | u32 0 | u32 0 | u32 texture count | textures...
@@ -31,7 +31,8 @@ class Texture:
 
 def parse(b: bytes) -> tuple[list[int], list[Texture]]:
     ver, ngroups, ntex = struct.unpack_from("<3I", b, 0)
-    assert ver == 5, f"version {ver}"
+    assert ver in (4, 5), f"version {ver}"
+    hdr = 28 if ver == 5 else 24  # version 4 (THPS4) has no leading zero word
     o = 12
     groups, texs = [], []
     for g in range(ngroups):
@@ -39,12 +40,12 @@ def parse(b: bytes) -> tuple[list[int], list[Texture]]:
         o += 16
         groups.append(gcrc)
         for k in range(n):
-            _lead, crc, lw, lh, psm, cpsm, flags = struct.unpack_from("<7I", b, o)
+            crc, lw, lh, psm, cpsm, flags = struct.unpack_from("<7I" if ver == 5 else "<6I", b, o)[-6:]
             if flags & 0x80000000:  # header only: no clut/pixels, no padding (data lives elsewhere)
                 texs.append(Texture(crc, 1 << lw, 1 << lh, psm, cpsm, flags, b"", [], gcrc))
-                o += 28
+                o += hdr
                 continue
-            o += 28
+            o += hdr
             o += -o % 16
             w, h = 1 << lw, 1 << lh
             clut = b""

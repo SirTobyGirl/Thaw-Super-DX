@@ -14,7 +14,11 @@ from thaw_sandbox import col as CL, convert_thug2 as C, geom as GM, pak, qb_data
 from thaw_sandbox import qb_parser as Q, thaw_tex as TT, thug2_tex as T2, zone
 
 # THUG2 node classes whose models do not exist in THAW: keep the nodes (link indices) but stop them spawning
-NEUTRALISE = ("LevelObject", "LevelLight", "Pedestrian", "Vehicle", "ParticleObject", "GameObject")
+NEUTRALISE = ("LevelObject", "LevelLight", "Pedestrian", "Vehicle", "ParticleObject", "GameObject",
+              "ParticleEmitter")  # (the last is THPS4's)
+# THPS4 node field names -> the THUG2/THAW ones
+RENAME_KEYS = {"Position": "Pos"}
+NODE_FILTER = None
 GREY = struct.pack("<16I", *([0x80606060] * 16))
 log = print
 
@@ -34,13 +38,13 @@ def _named(zb, tab):
             for x in tab if struct.unpack_from("<I", zb, x.pos + 28)[0] & 0x20}
 
 
-def convert_nodes(qb_bytes, code, na_zone, orig_crc):
+def convert_nodes(qb_bytes, code, na_zone, orig_crc, flip_z=False, neutralise=()):
     """THUG2 node file -> THAW node file (renamed node array, inlined includes, neutralised THUG2-only classes,
     sorted name index)."""
     _, items = F.read(C.convert(qb_bytes, "x")[0])
-    old_na, new_na = Q.qbcrc(f"{code}_NodeArray"), Q.qbcrc(f"{na_zone}_NodeArray")
-    for it in items:
-        if it.name == old_na:
+    old_na, new_na = {Q.qbcrc(f"{code}_NodeArray"), Q.qbcrc("NodeArray")}, Q.qbcrc(f"{na_zone}_NodeArray")
+    for it in items:  # THUG2: <code>_NodeArray, THPS4: NodeArray
+        if it.name in old_na:
             it.name = new_na
     na = next(it for it in items if it.name == new_na).value
     # THUG2 nodes include shared field sets by bare name (ncomp_* structs); inline them
@@ -54,10 +58,15 @@ def convert_nodes(qb_bytes, code, na_zone, orig_crc):
             else:
                 out.append((k, v))
         return out
+    ren = {Q.qbcrc(a): Q.qbcrc(b) for a, b in RENAME_KEYS.items()}
+    POS, ANG = Q.qbcrc("Pos"), Q.qbcrc("Angles")
     for node in na.items:
-        node.items = expand(node)
+        node.items = [(ren.get(k, k), v) for k, v in expand(node)]
+        if flip_z:  # THPS3/4 node space has Z mirrored relative to THUG and later (position Z and Z angle)
+            node.items = [(k, (v[0], v[1], -v[2]) if k in (POS, ANG) and isinstance(v, tuple) and len(v) == 3 else v)
+                          for k, v in node.items]
     CLS, CAS, MODEL, WP = Q.qbcrc("Class"), Q.qbcrc("CreatedAtStart"), Q.qbcrc("model"), Q.qbcrc("Waypoint")
-    drop, keep_class = {Q.qbcrc(c) for c in NEUTRALISE}, {Q.qbcrc("GameObject")}
+    drop, keep_class = {Q.qbcrc(c) for c in NEUTRALISE + tuple(neutralise)}, {Q.qbcrc("GameObject")}
     for s in list(na.items) + [it.value for it in items if isinstance(it.value, QD.Struct)]:
         c = next((getattr(v, "crc", None) for k, v in s.items if k == CLS), None)
         if c not in drop:
@@ -65,6 +74,8 @@ def convert_nodes(qb_bytes, code, na_zone, orig_crc):
         s.items = [(k, v) for k, v in s.items if k != MODEL and not (k == 0 and getattr(v, "crc", None) == CAS)]
         if c not in keep_class:
             s.items = [(k, QD.Name(WP) if k == CLS else v) for k, v in s.items]
+    if NODE_FILTER:  # bisection hook (harness): keep only some nodes
+        na.items = NODE_FILTER(na.items)
     NAME = Q.qbcrc("name")  # THAW node files carry a sorted name index
     pairs = sorted((v.crc, i) for i, s in enumerate(na.items) for n, v in s.items if n == NAME)
     items += [F.Item(12, Q.qbcrc(f"{na_zone}_NodeArray_SortedNames"), QD.Array(13, [QD.Name(c) for c, _ in pairs])),
@@ -106,7 +117,8 @@ def convert_level(template_zone, files, code, zone_name, resolve_refs, template=
     big = _biggest(zb, tab)
     p0 = pak.data_pos(big[".nqb"], 0)
     orig_crc, _ = F.read(zb[p0:p0 + big[".nqb"].size])
-    nqb = convert_nodes(files["qb"], code, zone_name, orig_crc)
+    nqb = convert_nodes(files["qb"], code, zone_name, orig_crc, flip_z=files.get("flip_z", False),
+                        neutralise=files.get("neutralise", ()))
     tex, geom, st = convert_textures_and_geometry(files["tex"], files["geom"], resolve_refs)
     rep = {big[".tex"].pos: tex, big[".geom"].pos: geom, big[".col"].pos: CL.thug2_to_thaw(files["col"]),
            big[".nqb"].pos: nqb}

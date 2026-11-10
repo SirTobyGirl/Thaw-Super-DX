@@ -7,6 +7,7 @@ Same node tree as THUG2 (geom.py). Differences found on School (sch.geom.ps2):
   * leaves do not name their texture (w17 = 0). Textures of a group are uploaded in file order at rising
     TBP, so each leaf's TEX0 (TBP, size, format, palette format) is matched to the group's textures in order.
   * node words: w7 has a top byte 0xff (cleared: THAW gives meaning to high flag bits), w13 = -1 (THUG2: 0),
+    w14 cleared to -1 (THAW: relocation list offset; THPS4: other meaning),
     w16 = 0x0000ff00 (THUG2: 0xff00ff00).
 Leaf chunks are DMA packets (tag qword: qwc in bits 0-15, VIF codes from byte 8); they are rebuilt with their
 new length and laid out again in the original order; node offsets are fixed for the shift.
@@ -118,6 +119,11 @@ def to_thug2(b: bytes, textures) -> tuple[bytes, dict]:
         w[10] = moved(n[10])
         w[7] = n[7] & 0x00FFFFFF
         w[13] = 0
+        # w14: THAW treats it as an offset to a relocation list ({count, entries}) unless -1; THPS4 uses it for
+        # something else (Carnival: 90 nodes) and the loader (FUN_001cfb58) walked past the end of RAM
+        if w[14] != 0xFFFFFFFF:
+            stats["w14 cleared"] += 1
+        w[14] = 0xFFFFFFFF
         w[16] = 0xFF00FF00
         struct.pack_into("<20I", out, no, *w)
     stats["bytes"] = len(out) - len(b)

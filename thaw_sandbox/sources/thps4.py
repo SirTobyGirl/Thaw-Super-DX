@@ -16,8 +16,8 @@ GAME = "THPS4"
 GENERATION = 4
 ORIGIN = {}  # THPS4's levels are its own
 SERIALS = ("SLUS_205.04",)
-# Carnival (cnv) is left out: its zone loads but the game returns to the level list (even with empty scripts)
-LEVELS = ("sch", "sf2", "alc", "kon", "jnk", "lon", "zoo", "hof")
+LEVELS = ("sch", "sf2", "alc", "kon", "jnk", "lon", "zoo", "cnv", "hof")
+EXTRA = ()  # convertible but not in the default list (can be asked for by code)
 # levels whose own scripts stop the load from finishing (kept playable without them: no gap triggers yet)
 NO_SCRIPTS = {"alc"}
 DISPLAY = {"hof": "Chicago"}  # the level struct calls it Hoffman (the factory); the game shows Chicago
@@ -64,7 +64,11 @@ class Source:
             f.seek(self.wad_off + off)
             return f.read(size)
 
-    def levels(self):
+    def all_levels(self):
+        """levels() plus ones that convert but are not in the default list (can be asked for by code)."""
+        return self.levels(LEVELS + EXTRA)
+
+    def levels(self, codes=LEVELS):
         q = thug2_qb.parse(thps4_qb.to_thug2(self.read("\\scripts\\levels.qb")))
         names = {}
         for v in q.data.values():
@@ -73,7 +77,7 @@ class Source:
                 lv, nm = d.get(Q.qbcrc("level")), d.get(Q.qbcrc("name"))
                 if isinstance(lv, str) and isinstance(nm, str):
                     names[lv.lower()] = nm
-        return [(c, DISPLAY.get(c) or names.get(c, c.upper())) for c in LEVELS]
+        return [(c, DISPLAY.get(c) or names.get(c, c.upper())) for c in codes]
 
     def level_files(self, code):
         tex = read_pre(self.read(f"\\pre\\{code}scn.pre"))[f"levels\\{code}\\{code}.tex.ps2"]

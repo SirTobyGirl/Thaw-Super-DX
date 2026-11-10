@@ -100,8 +100,8 @@ def build(thaw, wanted, out, work_dir, level_scripts=True, keep_duplicates=False
     srcs = []
     for path, codes in wanted:
         s = sources.open_source(disc_image(path, work_dir), os.path.join(work_dir, "cache"))
-        avail = dict(s.levels())
-        codes = codes or list(avail)
+        avail = dict(getattr(s, "all_levels", s.levels)())
+        codes = codes or [c for c, _ in s.levels()]
         bad = [c for c in codes if c not in avail]
         if bad:
             raise ValueError(f"{path}: unknown level(s) {bad}; available: {', '.join(avail)}")

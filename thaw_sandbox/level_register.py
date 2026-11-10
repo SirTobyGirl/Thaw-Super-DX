@@ -35,6 +35,35 @@ def _set(struct_v, key, value):
     raise KeyError(key)
 
 
+# The career keeps one flag object per level-table entry in a fixed array of 40 (CCareer+0x24: pointers at +8,
+# the level lookup map right after at +0xa8; SetFlag/GetFlag FUN_002fb540/FUN_002fb600). Entries past 40 have no
+# flags: LEVEL_VISITED never sticks and the level shows as ?????????.
+LEVEL_SLOTS = 40
+# base entries the sandbox can never reach (test, viewer and story-select zones): reused for new levels
+DEAD_SLOTS = ("z_testlevel", "z_test_nn", "z_viewer", "z_storyselect")
+
+
+def _names(e):
+    return next(v for k, v in e.items if k == H("names"))
+
+
+def _place_in_level_table(lt, ent, zn):
+    """Append while there are free slots (indices of existing levels stay put), then take over a dead base entry,
+    then share the last added entry (its names list gets this zone too: the levels share career flags, i.e. the
+    visited flag, gap and high score records)."""
+    if len(lt.items) < LEVEL_SLOTS:
+        lt.items.append(ent)
+        return "new"
+    for i, e in enumerate(lt.items):
+        nm = _names(e).items
+        if nm and isinstance(nm[0], str) and nm[0].lower() in DEAD_SLOTS:
+            lt.items[i] = ent
+            return "reused"
+    last = _names(lt.items[-1])
+    last.items += [type(last.items[0])(zn), type(last.items[0])(zn[2:])]
+    return "shared"
+
+
 def _edits(zn, display, zone_size, ped_size, setup):
     ZN, TZ = zn.upper(), TEMPLATE.upper()
 
@@ -57,7 +86,7 @@ def _edits(zn, display, zone_size, ped_size, setup):
                 v.items = [type(v.items[0])(zn), type(v.items[1])(zn[2:])]
             elif k == H("include_in_all_gaps_check"):
                 ent.items[i] = (k, 0)
-        lt.items.append(ent)  # appended so existing indices stay put
+        _place_in_level_table(lt, ent, zn)
         ld = copy.deepcopy(_get(items, f"load_{TZ}"))
         _, code = lzss.unpack_body(ld.value)
         old, new = struct.pack("<I", H(f"Level_{TZ}")), struct.pack("<I", H(f"Level_{ZN}"))

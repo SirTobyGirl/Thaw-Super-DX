@@ -1,7 +1,7 @@
 """thaw-super-dx: build a THAW free-skate sandbox with levels from your other Tony Hawk discs.
 
   python -m thaw_sandbox list  DISC                      levels a source disc offers
-  python -m thaw_sandbox build --thaw THAW.iso|.chd --add DISC[:code,code...] [--add ...] --out NEW.iso [--shrink]
+  python -m thaw_sandbox build --thaw THAW.iso|.chd --add DISC[:code,code...] [--add ...] --out NEW.iso [--shrink] [--package DIR]
 
 Discs are read only; the output is a new image. Supported sources: see thaw_sandbox/sources.
 """
@@ -27,6 +27,8 @@ def main(argv=None):
                    help="working folder (extracted .chd images, caches)")
     b.add_argument("--shrink", action="store_true",
                    help="cut the image down: drop the sponsor teasers and unused room (about 1.9 GB instead of 4 GB)")
+    b.add_argument("--package", metavar="DIR",
+                   help="also make an emulator-ready folder (image, Linux PCSX2 launcher, Android notes)")
     b.add_argument("--no-level-scripts", action="store_true", help="leave the levels' own scripts out")
     a = ap.parse_args(argv)
     if a.cmd == "list":
@@ -43,6 +45,10 @@ def main(argv=None):
     if a.shrink:
         from thaw_sandbox import iso_compact
         iso_compact.compact(a.out)
+    if a.package:
+        from thaw_sandbox import package
+        package.package(a.out, a.package, [n for n, _ in added])
+        print(f"emulator-ready folder: {a.package}")
     print(f"built {a.out}: {len(added)} levels added ({', '.join(n for n, _ in added)})")
     return 0
 

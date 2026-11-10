@@ -146,6 +146,39 @@ def sync_udf(f, total_sectors=None):
     return n
 
 
+# ---------------------------------------------------------------- DATAP.WAD pruning
+
+# story-mode / extras content the sandbox can never reach (story mode, the extras menu and the GameCube build)
+WAD_DROP = ("\\cutscenes\\", "\\images\\ngc_screens\\", "\\images\\concept_art\\")
+
+
+def prune_wad(img, prefixes=WAD_DROP):
+    """Give dropped WAD files size 0 and pack the rest down inside DATAP.WAD (HED and both lookup indexes are
+    rewritten by Disc.save). Entries sharing data keep sharing it. -> bytes freed"""
+    from thaw_sandbox.disc import Disc
+    d = Disc(img)
+    for e in d.ents:
+        if e.name.lower().startswith(prefixes):
+            e.size = 0
+    spans = {}  # old sector -> bytes needed (max over aliases)
+    for e in d.ents:
+        if e.size:
+            spans[e.offset] = max(spans.get(e.offset, 0), e.size)
+    new, cur = {}, 0
+    with open(img, "r+b") as f:
+        base = d.wad_off // SECTOR
+        for off in sorted(spans):
+            assert off >= cur
+            _move(f, base + off, base + cur, spans[off])
+            new[off] = cur
+            cur += _sectors(spans[off])
+    freed = d.end - cur * SECTOR
+    for e in d.ents:
+        e.offset = new.get(e.offset, 0) if e.size else 0
+    d.save()
+    return freed
+
+
 # ---------------------------------------------------------------- compaction
 
 def _wad_used(f, files):
@@ -187,8 +220,10 @@ def _move(f, src, dst, n):
         done += k
 
 
-def compact(img, drop=("TEASERS", "MOVIES"), trim_wad=True, log=print):
+def compact(img, drop=("TEASERS", "MOVIES"), trim_wad=True, wad_drop=WAD_DROP, log=print):
     old = os.path.getsize(img)
+    if wad_drop:
+        log(f"story/extras files dropped from DATAP.WAD: {prune_wad(img, wad_drop) / 2**20:.0f} MB")
     with open(img, "r+b") as f:
         files = _all_files(f)
         live = [x for x in files if x[2] and x[3].split("/")[1] not in drop]

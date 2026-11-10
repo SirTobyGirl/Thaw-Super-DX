@@ -19,6 +19,7 @@ from thaw_sandbox.zone_rename import rename_zone
 
 THAW_SERIALS = ("SLUS_212.95",)
 TEMPLATE = "z_ja"
+MAX_NEW_LEVELS = 16  # 23 added: entries from the 31st list position on showed as locked (unlock limit, to find)
 NAME_SOURCES = ("\\pak\\dbg.pak.ps2", "\\pak\\dbgq.pak.ps2", "\\pak\\dbgq.pab.ps2", "\\pak\\qb.pab.ps2",
                 f"\\worlds\\worldzones\\{TEMPLATE}\\{TEMPLATE}.pak.ps2",
                 f"\\worlds\\worldzones\\{TEMPLATE}\\{TEMPLATE}ped.pak.ps2", f"\\sounds\\pak\\{TEMPLATE}_sfx.pak.ps2")
@@ -105,6 +106,10 @@ def build(thaw, wanted, out, work_dir, level_scripts=True):
         if bad:
             raise ValueError(f"{path}: unknown level(s) {bad}; available: {', '.join(avail)}")
         srcs.append((s, [(c, avail[c]) for c in codes]))
+    n_new = sum(len(lv) for _, lv in srcs)
+    if n_new > MAX_NEW_LEVELS:
+        raise ValueError(f"{n_new} levels chosen; at most {MAX_NEW_LEVELS} can be added for now (THAW's level list "
+                         f"shows levels past 30 as locked ?????????). Pick levels with DISC:code,code,...")
     if os.path.abspath(out) in (os.path.abspath(thaw_iso), os.path.abspath(thaw)):
         raise ValueError("the output must not be the input disc")
     log("copying THAW and making room ...")

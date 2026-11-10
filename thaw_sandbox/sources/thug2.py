@@ -10,6 +10,10 @@ import struct
 from thaw_sandbox import iso_manager as I, qb_data as QD, qb_parser as Q, thug2_qb, thug2_tex as T2
 
 GAME = "THUG2"
+GENERATION = 6  # engine order: THPS3 3, THPS4 4, THUG 5, THUG2 6, THAW 7 (newest version of a level wins)
+# classic levels THUG2 remade from earlier games: the same level as the original game's version (only this newer
+# one is imported when both discs are given). THPS3 codes checked on the THPS3 disc (ap/can/la .pre + loadscrn).
+ORIGIN = {"ap": "thps3:airport", "ca": "thps3:canada", "la": "thps3:los_angeles"}
 SERIALS = ("SLUS_209.65",)
 # the 15 skateable levels (story + classic); codes as on the disc
 # zone name preferences (THAW zone names are z_ + 2 characters) and display names differing from THUG2's own
@@ -40,6 +44,8 @@ def _hed(data):
 
 class Source:
     GAME = GAME
+    GENERATION = GENERATION
+    ORIGIN = ORIGIN
     ZONE_HINTS = ZONE_HINTS
 
     def __init__(self, iso, cache_dir):

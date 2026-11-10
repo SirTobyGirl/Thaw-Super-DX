@@ -9,6 +9,8 @@ You need: your own Tony Hawk's American Wasteland (NTSC-U, .iso or .chd) and the
          --out "THAW Super DX.iso" [--shrink] [--package DIR]
 
   --add DISC[:codes]  all levels of DISC, or only the listed codes
+  --keep-duplicates   a level that a newer game remade (e.g. THPS3's Airport, in THUG2) is normally imported once,
+                      from the newest engine; this keeps every version
   --shrink            drop movies, sponsor teasers, story cutscenes/extras; about 1.7 GB instead of 4 GB
   --package DIR       emulator-ready folder: the image, play-linux.sh (PCSX2) and Android notes
 The output boots straight to the level list (free skate, all levels unlocked). Your discs are never modified.

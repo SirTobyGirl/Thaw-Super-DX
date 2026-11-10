@@ -91,7 +91,7 @@ def zone_names(codes, taken, hints=None):
     return out
 
 
-def build(thaw, wanted, out, work_dir, level_scripts=True):
+def build(thaw, wanted, out, work_dir, level_scripts=True, keep_duplicates=False):
     """wanted: [(source disc path, [codes] or None)]. Returns [(display name, zone)] added."""
     os.makedirs(work_dir, exist_ok=True)
     thaw_iso = disc_image(thaw, work_dir)
@@ -106,6 +106,10 @@ def build(thaw, wanted, out, work_dir, level_scripts=True):
         if bad:
             raise ValueError(f"{path}: unknown level(s) {bad}; available: {', '.join(avail)}")
         srcs.append((s, [(c, avail[c]) for c in codes]))
+    if not keep_duplicates:  # a level in several games is imported once, from the newest engine
+        srcs, skipped = sources.dedupe(srcs)
+        for s, code, name, newer in skipped:
+            log(f"skipping {s.GAME} {name}: the {newer.GAME} version of this level is included")
     n_new = sum(len(lv) for _, lv in srcs)
     if n_new > MAX_NEW_LEVELS:
         raise ValueError(f"{n_new} levels chosen; at most {MAX_NEW_LEVELS} can be added. Pick levels with DISC:code,code,...")

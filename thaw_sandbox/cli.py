@@ -29,6 +29,8 @@ def main(argv=None):
                    help="cut the image down: drop the sponsor teasers and unused room (about 1.9 GB instead of 4 GB)")
     b.add_argument("--package", metavar="DIR",
                    help="also make an emulator-ready folder (image, Linux PCSX2 launcher, Android notes)")
+    b.add_argument("--keep-duplicates", action="store_true",
+                   help="import a level from every chosen game even when a newer game remade it (default: newest only)")
     b.add_argument("--no-level-scripts", action="store_true", help="leave the levels' own scripts out")
     a = ap.parse_args(argv)
     if a.cmd == "list":
@@ -41,7 +43,8 @@ def main(argv=None):
     for spec in a.add:
         path, _, codes = spec.rpartition(":") if os.path.exists(spec.rpartition(":")[0] or "\0") else (spec, "", "")
         wanted.append((path, [c for c in codes.split(",") if c] or None))
-    added = B.build(a.thaw, wanted, a.out, a.work, level_scripts=not a.no_level_scripts)
+    added = B.build(a.thaw, wanted, a.out, a.work, level_scripts=not a.no_level_scripts,
+                    keep_duplicates=a.keep_duplicates)
     if a.shrink:
         from thaw_sandbox import iso_compact
         iso_compact.compact(a.out)

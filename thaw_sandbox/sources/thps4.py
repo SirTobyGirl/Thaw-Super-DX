@@ -13,6 +13,8 @@ from thaw_sandbox import thug2_qb, thug2_tex as T2
 from thaw_sandbox.sources.thug2 import _hed
 
 GAME = "THPS4"
+GENERATION = 4
+ORIGIN = {}  # THPS4's levels are its own
 SERIALS = ("SLUS_205.04",)
 # Carnival (cnv) is left out: its zone loads but the game returns to the level list (even with empty scripts)
 LEVELS = ("sch", "sf2", "alc", "kon", "jnk", "lon", "zoo", "hof")
@@ -46,6 +48,8 @@ def read_pre(b):
 
 class Source:
     GAME = GAME
+    GENERATION = GENERATION
+    ORIGIN = ORIGIN
     ZONE_HINTS = ZONE_HINTS
     USE_SETUP = False  # THPS4's <code>_setup scripts call THPS4-era functions; with them the load never finished
 

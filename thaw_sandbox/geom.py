@@ -34,7 +34,7 @@ def walk(b: bytes):
 
 
 def thug2_to_thaw(b: bytes, groups: list, textures_by_group: dict, set_100: bool = True,
-                  strip_extra: bool = True) -> tuple[bytes, dict]:
+                  strip_extra: bool = True, moved: dict = None) -> tuple[bytes, dict]:
     """groups: group crcs in the output texture dictionary's order.
     textures_by_group: group crc -> texture crcs in that group's order (as written)."""
     out = bytearray(b)
@@ -46,11 +46,12 @@ def thug2_to_thaw(b: bytes, groups: list, textures_by_group: dict, set_100: bool
         if not n[7] & LEAF:
             continue
         stats["leaves"] += 1
-        g = gidx.get(n[11])
+        grp = (moved or {}).get((n[11], n[17]), n[11])  # texture moved to a split-off part of its group
+        g = gidx.get(grp)
         if g is None:
             stats["no group"] += 1
             g = 1
-        t = tidx.get(n[11], {}).get(n[17], 0)
+        t = tidx.get(grp, {}).get(n[17], 0)
         if t == 0:  # texture not in the dictionary: 0 is not "none" to the engine (it becomes a pointer
             stats["no texture"] += 1  # to the texture before the group), so use the group's first texture
             t = 1

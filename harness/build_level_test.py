@@ -119,6 +119,9 @@ def build_zone(src_dir, code, z, tex_mode="thug2", parts=("tex", "geom", "col", 
                     new.append(TT.NewTexture(x.crc, 32, 32, 0x14, 0, grey, [bytes(512)], group=x.group))
                 else:
                     new.append(TT.NewTexture(x.crc, 8, 8, 0x14, 0, grey, [bytes(32)], group=x.group))
+        moved = TT.split_groups(new)  # groups too big for one THAW VRAM window are split
+        if moved:
+            print(f"split oversized texture groups: {len(moved)} textures moved")
         tex = TT.write(new)
         order, by = [], {}
         for t in new:  # the writer keeps groups in order of first appearance, textures in input order
@@ -126,7 +129,7 @@ def build_zone(src_dir, code, z, tex_mode="thug2", parts=("tex", "geom", "col", 
                 order.append(t.group)
                 by[t.group] = []
             by[t.group].append(t.crc)
-        geom, st = GM.thug2_to_thaw(geom, order, by)
+        geom, st = GM.thug2_to_thaw(geom, order, by, moved=moved)
         geom, ndrop = GM.drop_untextured(geom)
         st["untextured leaves dropped"] = ndrop
         if os.environ.get("LEAVES"):  # experiment: "a:b" keeps only leaves a..b-1 active

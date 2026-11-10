@@ -184,6 +184,47 @@ GROUP_END = struct.pack("<QQ", 0x60000002, 0x50000002 << 32) + \
     struct.pack("<QQ", 0x1000000000008001, 0x0E) + struct.pack("<QQ", 0, 0x3F)  # RET, TEXFLUSH
 
 
+def _place(t, lo, hi):
+    """Place a texture's top level the way write() does (page-aligned page-sized levels, palette from the top).
+    Returns (new lo, new hi) or None if it does not fit."""
+    w, h = t.width, t.height
+    tbw = _tbw(t.psm, w)
+    blocks = _level_blocks(t.psm, w, h, tbw)
+    cblocks = (4 if t.cpsm == 0 else 2) if t.psm == 0x13 else 1
+    cbp = hi - cblocks
+    cbp -= cbp % cblocks
+    if blocks >= 32 and lo % 32:
+        lo += 32 - lo % 32
+    lo += blocks
+    return None if lo > cbp else (lo, cbp)
+
+
+def split_groups(textures: list) -> dict:
+    """THUG2 texture groups can hold more than one THAW VRAM window. Split such groups into consecutive groups
+    that fit (top levels only, same placement as write()), giving each extra part a derived group crc.
+    Returns {(orig group, texture crc): new group} for the textures that moved; geometry leaves use one texture
+    each, so they can follow it."""
+    lo0, hi0 = WINDOWS[0]
+    moved = {}
+    by = {}
+    for t in textures:
+        by.setdefault(t.group, []).append(t)
+    for g, ts in by.items():
+        lo, hi, part = lo0, hi0, 0
+        for t in ts:
+            r = _place(t, lo, hi)
+            if r is None:
+                part += 1
+                r = _place(t, lo0, hi0)
+                assert r is not None, f"texture {t.crc:#x} alone does not fit a VRAM window"
+            lo, hi = r
+            if part:
+                ng = (g + part * 0x9E3779B1) & 0xFFFFFFFF
+                moved[(g, t.crc)] = ng
+                t.group = ng
+    return moved
+
+
 def write(textures: list) -> bytes:
     """Build a version 6 texture dictionary, storing pixels in THAW's upload formats (upload_format).
     Groups (and their order) come from NewTexture.group."""

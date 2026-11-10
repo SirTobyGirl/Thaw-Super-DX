@@ -1,3 +1,20 @@
+THAW Super DX - using the tool
+==============================
+You need: your own Tony Hawk's American Wasteland (NTSC-U, .iso or .chd) and the discs you want levels from
+(supported: THUG2 SLUS-20965, THPS4 SLUS-20504). Python 3 with the packages in .venv; chdman for .chd input.
+
+  python -m thaw_sandbox list  "THPS4.iso"                      # levels a disc offers (codes + names)
+  python -m thaw_sandbox build --thaw "THAW.chd" \
+         --add "THUG2.iso" --add "THPS4.iso:sch,alc" \
+         --out "THAW Super DX.iso" [--shrink] [--package DIR]
+
+  --add DISC[:codes]  all levels of DISC, or only the listed codes
+  --shrink            drop movies, sponsor teasers, story cutscenes/extras; about 1.7 GB instead of 4 GB
+  --package DIR       emulator-ready folder: the image, play-linux.sh (PCSX2) and Android notes
+The output boots straight to the level list (free skate, all levels unlocked). Your discs are never modified.
+
+(Original project blueprint below.)
+
 THAW Free Skate Sandbox: ROM Patcher & Injector
 An Automation Blueprint for Claude Code
 

@@ -241,7 +241,9 @@ def strip_extra_qwords(b: bytearray, o: int) -> int:
         cmd = (w >> 24) & 0x7F
         nxt = (codes[idx + 1][1] >> 24) & 0x7F if idx + 1 < len(codes) else None
         is_v4_32_n1 = cmd & 0x6F == 0x6C and ((w >> 16) & 0xFF) == 1
-        if is_v4_32_n1 and prev == 0x01 and (codes[idx - 1][1] & 0xFFFF) == 0x0103:
+        # vertex GIFtags follow STCYCL cl=2/3/4 (cl=1 precedes the register block's own tag, which has no EOP);
+        # a cl=2 tag without EOP (THUG Slam City Jam, colours + positions) left the GS waiting: frozen frame
+        if is_v4_32_n1 and prev == 0x01 and (codes[idx - 1][1] & 0xFFFF) in (0x0102, 0x0103, 0x0104):
             tags.append(p + 4)
         if is_v4_32_n1 and prev is not None and prev & 0x6F == 0x68 and shift == 0:
             param = struct.unpack_from("<I", b, p + 16)[0] & 0xFFFF0000

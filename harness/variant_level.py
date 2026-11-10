@@ -47,10 +47,25 @@ if os.environ.get("SCRIPT_RANGE"):  # keep only level scripts a..b-1 (records in
 
     def sflt(items):
         print(f"level scripts kept {a_}..{b_} of {len(items)}")
-        return items[a_:b_]
+        kept = items[a_:b_]
+        if os.environ.get("SCRIPT_RENAME"):  # rename the kept scripts (tests a name collision vs the body)
+            for it in kept:
+                it.name ^= 0x5A5A0000
+        return kept
     L.SCRIPT_FILTER = sflt
 if os.environ.get("ALL_SCRIPTS"):  # lift a source's per-level no-scripts exceptions
     from thaw_sandbox.sources import thps4
     thps4.NO_SCRIPTS.clear()
+if os.environ.get("LEAVES"):  # keep only converted leaves a..b-1 (depth-first order); the rest are unlinked
+    from thaw_sandbox import geom as GM
+    la, lb = map(int, os.environ["LEAVES"].split(":"))
+    _ctg = L.convert_textures_and_geometry
+
+    def ctg(*a, **k):
+        tex, geom, st = _ctg(*a, **k)
+        geom, n = GM.prune_leaves(geom, lambda i: la <= i < lb)
+        print(f"leaves kept {la}..{lb} ({n})")
+        return tex, geom, st
+    L.convert_textures_and_geometry = ctg
 L.convert_level = patched
 B.build(base, [(disc, [code])], out, "_workspace/e2e")

@@ -58,6 +58,27 @@ def _rename_code(code: bytes, rn) -> bytes:
     return bytes(out)
 
 
+def _resort_name_indexes(items) -> int:
+    """<X>_NodeArray_SortedNames (Name array) + <X>_NodeArray_SortedIndices (int array right after it): the
+    engine finds nodes by name with a binary search over the names (FUN_00252bd0). Renaming Z_JA_SFX_* nodes
+    changes their crcs, so the pairs are sorted again; an unsorted index made lookups of Kyoto's sound emitter
+    nodes fail and the engine then read the fields of a null node (FUN_00216aa8: random freezes after loading)."""
+    n = 0
+    for a, b in zip(items, items[1:]):
+        if not (isinstance(a.value, QD.Array) and isinstance(b.value, QD.Array)):
+            continue
+        na, ib = a.value.items, b.value.items
+        if not na or len(na) != len(ib) or not all(isinstance(x, QD.Name) for x in na) \
+                or not all(isinstance(x, int) for x in ib):
+            continue
+        pairs = sorted(zip((x.crc for x in na), ib))
+        if [c for c, _ in pairs] != [x.crc for x in na]:
+            a.value.items = [QD.Name(c) for c, _ in pairs]
+            b.value.items = [i for _, i in pairs]
+            n += 1
+    return n
+
+
 def rename_zone(zb: bytes, old: str, new: str, nt: NameTable) -> tuple[bytes, dict]:
     assert len(old) == len(new)
     # paths of this zone's entries (for the entry header hashes)
@@ -110,6 +131,7 @@ def rename_zone(zb: bytes, old: str, new: str, nt: NameTable) -> tuple[bytes, di
                 else:
                     it.value = _rename_value(it.value, rn)
                 st["qb records"] += 1
+            st["indexes resorted"] = st.get("indexes resorted", 0) + _resort_name_indexes(items)
             rep[e.pos] = F.write(crc, items)
     res = zone.rebuild(bytes(out), rep) if rep else bytes(out)
     return res, st

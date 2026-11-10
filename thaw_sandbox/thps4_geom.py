@@ -117,7 +117,11 @@ def to_thug2(b: bytes, textures) -> tuple[bytes, dict]:
         else:
             w[8] = moved(n[8])
         w[10] = moved(n[10])
-        w[7] = n[7] & 0x00FFFFFF
+        # flag 0x400 = vertex colour animation, list at w14 (FUN_001d6138 interpolates keys and writes them through
+        # the list's pointers). The THPS4/THUG list format differs and w14 is cleared below, so the flag goes too
+        # (static colours); left set, the renderer read a null list when such a leaf came into view (THUG Hawaii,
+        # Vancouver, Slam City Jam froze; 0x1d6138 load from 0)
+        w[7] = n[7] & 0x00FFFBFF
         w[13] = 0
         # w14: THAW treats it as an offset to a relocation list ({count, entries}) unless -1; THPS4 uses it for
         # something else (Carnival: 90 nodes) and the loader (FUN_001cfb58) walked past the end of RAM

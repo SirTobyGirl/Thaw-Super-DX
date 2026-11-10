@@ -14,7 +14,7 @@ import struct
 
 from thaw_sandbox import geom as GM, pak, zone
 
-THAW_SELECTORS = {0x3C, 0x3E, 0x40, 0x44, 0x46, 0x48, 0x4A, 0x4E, 0x50, 0x52, 0x54}
+THAW_SELECTORS = {0x3A, 0x3C, 0x3E, 0x40, 0x44, 0x46, 0x48, 0x4A, 0x4E, 0x50, 0x52, 0x54}
 SHAPES = "_workspace/thaw_batch_shapes.pkl"
 
 
@@ -78,7 +78,8 @@ def check(b: bytes) -> collections.Counter:
             if mx + 1 != (n[9] >> 16) & 0x3FF:
                 bad["addrs"] += 1
         for j, (p, w) in enumerate(codes):
-            if (w >> 24) & 0x6F == 0x6C and ((w >> 16) & 0xFF) == 1 and j and codes[j - 1][1] == 0x01000103:
+            if (w >> 24) & 0x6F == 0x6C and ((w >> 16) & 0xFF) == 1 and j and \
+                    codes[j - 1][1] in (0x01000102, 0x01000103, 0x01000104):
                 w0, w1 = struct.unpack_from("<2I", b, p + 4)
                 if (w1 & 0xFF) not in THAW_SELECTORS:
                     bad["selector"] += 1

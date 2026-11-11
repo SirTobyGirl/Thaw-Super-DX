@@ -31,9 +31,21 @@ def _tex0(b, o):
     return None
 
 
+def _fits(t, v):
+    tw, th, psm, cpsm = 1 << ((v >> 26) & 0xF), 1 << ((v >> 30) & 0xF), (v >> 20) & 0x3F, (v >> 51) & 0xF
+    return t.width == tw and t.height == th and t.psm == psm and (psm not in (0x13, 0x14) or t.cpsm == cpsm)
+
+
+def _clut_blocks(t):
+    """GS blocks a texture's palette takes: T4 1, T8 2 (CT16) or 4 (CT32), unpalettised 0."""
+    return 1 if t.psm == 0x14 else (4 if t.cpsm == 0 else 2) if t.psm == 0x13 else 0
+
+
 def _match_textures(b, leaves, textures):
-    """{group crc: {tex0: texture crc}} by walking each group's textures in file order against its leaves'
-    distinct TEX0 values in TBP order (unused textures are skipped)."""
+    """{group crc: {tex0: texture crc}}. A group's palettes are uploaded downwards from a top block in file order,
+    unused textures included, so TEX0's CBP names the texture exactly: CBP = top - (palette blocks of textures
+    0..i). The top is the value most leaves agree on. TEX0 values that fit no slot fall back to walking the
+    group's textures in file order against the values in TBP order (unused textures skipped)."""
     use = collections.defaultdict(set)
     for _o, n in leaves:
         t = _tex0(b, K + n[8])
@@ -42,16 +54,25 @@ def _match_textures(b, leaves, textures):
     out = {}
     for g, vals in use.items():
         ts = [x for x in textures if x.group == g]
-        vals = sorted(vals, key=lambda v: v & 0x3FFF)
-        m, i = {}, 0
+        cum, c = [], 0
+        for x in ts:
+            c += _clut_blocks(x)
+            cum.append(c)
+        votes = collections.Counter(((v >> 37) & 0x3FFF) + cum[i] for v in vals for i, x in enumerate(ts)
+                                    if _fits(x, v))
+        top = votes.most_common(1)[0][0] if votes else None
+        m = {}
         for v in vals:
-            tw, th, psm, cpsm = 1 << ((v >> 26) & 0xF), 1 << ((v >> 30) & 0xF), (v >> 20) & 0x3F, (v >> 51) & 0xF
-            while i < len(ts) and not (ts[i].width == tw and ts[i].height == th and ts[i].psm == psm
-                                       and (psm not in (0x13, 0x14) or ts[i].cpsm == cpsm)):
+            i = next((i for i, x in enumerate(ts) if _fits(x, v) and top - cum[i] == (v >> 37) & 0x3FFF), None)
+            if i is not None:
+                m[v] = ts[i].crc
+        i = 0
+        for v in sorted(vals, key=lambda v: v & 0x3FFF):
+            while i < len(ts) and not _fits(ts[i], v):
                 i += 1
             if i == len(ts):
                 break
-            m[v] = ts[i].crc
+            m.setdefault(v, ts[i].crc)
             i += 1
         out[g] = m
     return out
@@ -60,6 +81,20 @@ def _match_textures(b, leaves, textures):
 # THPS4 sets 0x4000 in the flag word of every strip-restart vertex (0xc000); THAW's data never does (Kyoto: 0x8000
 # restart, 0x20 odd-vertex parity) and its microcode gives the bit another meaning: THPS4 levels lost surfaces
 W_CLEAR = 0x4000
+
+# Vertex GIFtags (PRE, NREG 3, REGS ST RGBAQ XYZ): for microcode selectors 0x3c / 0x3e / 0x48 THPS4 says XYZF2
+# without fog (PRIM 0x5c) - its microcode wrote 24-bit Z + fog. THAW's routines behind the same selectors write a
+# 32-bit Z for XYZ2 (THAW, THUG, THUG2 all use XYZ2 + PRIM fog bit, 0x7c, with them). Read as XYZF2 the depth
+# lost its top byte: walls and floors drew over the skater (torso hidden, invisible at spawn). Every THPS4 level.
+XYZF2_SELECTORS = {0x3C, 0x3E, 0x48}
+FGE = 1 << 20  # PRIM fog bit, in GIFtag word 1 (PRIM = bits 47-57 of the tag)
+
+
+def _vertex_tag(q):
+    if (q[1] >> 14) & 1 and q[1] >> 28 == 3 and q[2] & 0xFFF == 0x512 and q[1] & 0xFF in XYZF2_SELECTORS:
+        q[1] |= FGE
+        q[2] = (q[2] & ~0xFFF) | 0x412
+    return q
 
 
 def _rebuild_chunk(b, o):
@@ -77,6 +112,13 @@ def _rebuild_chunk(b, o):
             vals = struct.unpack_from(f"<{2 * num}{'H' if usn else 'h'}", b, p + 4)
             body += struct.pack("<I", (w & ~0x0F000000) | (0x04 << 24))
             body += struct.pack(f"<{2 * num}{'I' if usn else 'i'}", *vals)
+        elif cmd >= 0x60 and cmd & 0x6F == 0x6C:  # V4_32: GIFtags among them
+            num = ((w >> 16) & 0xFF) or 256
+            body += struct.pack("<I", w)
+            for i in range(num):
+                q = list(struct.unpack_from("<4I", b, p + 4 + 16 * i))
+                body += struct.pack("<4I", *_vertex_tag(q))
+            body += b[p + 4 + 16 * num:nxt]
         elif cmd >= 0x60 and cmd & 0x6F == 0x6D:  # V4_16 positions: x, y, z, flags
             num = ((w >> 16) & 0xFF) or 256
             vals = list(struct.unpack_from(f"<{4 * num}H", b, p + 4))

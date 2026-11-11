@@ -210,3 +210,50 @@ def convert_level(template_zone, files, code, zone_name, resolve_refs, template=
         rep[big[".tex"].pos], rep[big[".geom"].pos] = tex, geom
         out = zone.rebuild(zb, rep)
     return out, st
+
+
+def assemble_level(template_zone, tex, geom, col, node_items, zone_name, template="z_ja"):
+    """A zone from ready THAW parts (generated levels): texture dictionary, geometry (texture registers are bound
+    here), collision and node structs. The template's scripts are emptied, its peds and gaps cleared; rails come
+    from the nodes."""
+    zb = template_zone
+    tab = zone.entries(zb)
+    big = _biggest(zb, tab)
+    p0 = pak.data_pos(big[".nqb"], 0)
+    orig_crc, _ = F.read(zb[p0:p0 + big[".nqb"].size])
+    na = QD.Array(10, node_items)
+    NAME = Q.qbcrc("name")
+    pairs = sorted((v.crc, i) for i, s in enumerate(node_items) for n, v in s.items if n == NAME)
+    items = [F.Item(12, Q.qbcrc(f"{zone_name}_NodeArray"), na),
+             F.Item(12, Q.qbcrc(f"{zone_name}_NodeArray_SortedNames"), QD.Array(13, [QD.Name(c) for c, _ in pairs])),
+             F.Item(12, Q.qbcrc(f"{zone_name}_NodeArray_SortedIndices"), QD.Array(1, [i for _, i in pairs]))]
+    geom, _ = GM.bind_textures(geom, tex)
+    rep = {big[".tex"].pos: tex, big[".geom"].pos: geom, big[".col"].pos: col,
+           big[".nqb"].pos: F.write(orig_crc, items)}
+    rnb = rails.build(node_items, {})
+    named = _named(zb, tab)
+    se = named[f"{template}_scripts.qb.ps2"]
+    sp = pak.data_pos(se, 0)
+    scrc, sitems = F.read(zb[sp:sp + se.size])
+    empty = C.script_body(b"\x01\x24")
+    for it in sitems:
+        if it.vtype == 7:
+            it.value = empty
+    rep[se.pos] = F.write(scrc, sitems)
+    for e in tab:
+        typ = struct.unpack_from("<I", zb, e.pos)[0]
+        if e.size >= 0x40000000:
+            continue
+        if typ == rails.RNB_TYPE:
+            rep[e.pos] = rnb
+        elif typ == gaps.GAP_TYPE:
+            rep[e.pos] = gaps.build([], zone_name)
+    pe = named[f"{template}_peds.qb.ps2"]
+    pp = pak.data_pos(pe, 0)
+    pcrc, pitems = F.read(zb[pp:pp + pe.size])
+    for it in pitems:
+        if it.name == Q.qbcrc(f"{template}_skate_peds"):
+            it.value.items = []
+    rep[pe.pos] = F.write(pcrc, pitems)
+    return zone.rebuild(zb, rep), {"textures": TT.parse(tex)[1].__len__(), "leaves": sum(
+        1 for _, n in GM.walk(geom) if n[7] & GM.LEAF)}

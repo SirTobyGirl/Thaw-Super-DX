@@ -149,9 +149,13 @@ def build(thaw, wanted, out, work_dir, level_scripts=True, keep_duplicates=False
         for code, display in levels:
             zn = zones[code]
             log(f"{s.GAME} {display}: converting ...")
-            files = s.level_files(code)
-            zb, st = level_convert.convert_level(template, files, code, zn, s.resolve_texture_refs,
-                                                 template=TEMPLATE, level_scripts=level_scripts)
+            if getattr(s, "PREBUILT", False):  # generated level (thaw_sandbox.mapgen)
+                files = {}
+                zb, st = s.build_zone(code, template, zn, TEMPLATE)
+            else:
+                files = s.level_files(code)
+                zb, st = level_convert.convert_level(template, files, code, zn, s.resolve_texture_refs,
+                                                     template=TEMPLATE, level_scripts=level_scripts)
             zb, _ = rename_zone(zb, TEMPLATE, zn, nt)
             ped, _ = rename_zone(ped0, TEMPLATE, zn, nt)
             sfx, _ = rename_zone(sfx0, TEMPLATE, zn, nt)

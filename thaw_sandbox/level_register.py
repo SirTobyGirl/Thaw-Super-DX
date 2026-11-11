@@ -16,7 +16,7 @@ import os
 import struct
 import tempfile
 
-from thaw_sandbox import convert_thug2 as C, lzss, pak, qb_data as QD, qb_file as F, qb_parser as Q
+from thaw_sandbox import convert_thug2 as C, lzss, pak, qb_data as QD, qb_file as F, qb_parser as Q, qb_tokens as T
 
 H = Q.qbcrc
 TEMPLATE = "z_ja"
@@ -145,12 +145,46 @@ def _find(root, fn):
 
 
 def register(qb_pak, qb_pab, zn, display, zone_size, ped_size, setup=None, tmp_dir=None):
+    return edit_files(qb_pak, qb_pab, _edits(zn, display, zone_size, ped_size, setup), tmp_dir)
+
+
+def _no_special_locks(items):
+    arr = _get(items, "level_select_menu_level_info").value
+    for e in arr.items:
+        e.items = [(k, v) for k, v in e.items if k != H("special_case_flag")]
+
+
+# free skate: levels with an extra story lock (Skate Ranch: special_case_flag Z_SR_UNLOCKED_WITH_STORY) open too
+UNLOCK_EDITS = (("gamemenu_levelselect.qb.ps2", _no_special_locks),)
+
+
+def open_added_edits(zones):
+    """Without unlock-all THAW's levels open as story mode visits them, which never happens for added levels:
+    opening the level select (launch_level_select_menu, whose first call hide_current_goal is swapped for this
+    script) marks them visited."""
+    def edit(items):
+        code = T.assemble("hide_current_goal\n" + "\n".join(
+            f"SetFlag Level = load_{z.upper()} flag = LEVEL_VISITED" for z in zones), H)
+        items.append(F.Item(7, H("sdx_open_added_levels"), C.script_body(code)))
+        it = _get(items, "launch_level_select_menu")
+        _, c = lzss.unpack_body(it.value)
+        old, new = (b"\x16" + struct.pack("<I", H(n)) for n in ("hide_current_goal", "sdx_open_added_levels"))
+        assert c.count(old) == 1
+        try:
+            it.value = lzss.patch_code(it.value, c.replace(old, new))
+        except ValueError:
+            it.value = C.script_body(c.replace(old, new))
+    return (("gamemenu_levelselect.qb.ps2", edit),)
+
+
+def edit_files(qb_pak, qb_pab, edits, tmp_dir=None):
+    """Apply [(qb file name, edit(items))] to the global script pack -> (new pak, new pab)."""
     with tempfile.TemporaryDirectory(dir=tmp_dir) as tmp:
         src = os.path.join(tmp, "qb")
         open(os.path.join(tmp, "in.pak"), "wb").write(qb_pak)
         open(os.path.join(tmp, "in.pab"), "wb").write(qb_pab)
         pak.unpack(os.path.join(tmp, "in.pak"), os.path.join(tmp, "in.pab"), src)
-        for fn, edit in _edits(zn, display, zone_size, ped_size, setup):
+        for fn, edit in edits:
             p = _find(src, fn)
             crc, items = F.read(open(p, "rb").read())
             edit(items)

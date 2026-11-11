@@ -91,8 +91,14 @@ def zone_names(codes, taken, hints=None):
     return out
 
 
-def build(thaw, wanted, out, work_dir, level_scripts=True, keep_duplicates=False):
-    """wanted: [(source disc path, [codes] or None)]. Returns [(display name, zone)] added."""
+ROOM_PER_LEVEL = 14 * 2**20  # zone (<= 10.4 MB) + ped + sfx packs + a re-appended qb.pab
+
+
+def build(thaw, wanted, out, work_dir, level_scripts=True, keep_duplicates=False, sandbox=False, unlock_all=True):
+    """wanted: [(source disc path, [codes] or None)]. Returns [(display name, zone)] added.
+    sandbox: boot straight to the free-skate level list (for shrunk images: the movies' room is used);
+    otherwise THAW boots and plays as normal (every file kept, the image grows) and the levels are in free skate.
+    unlock_all: every level unlocked in free skate (always on with sandbox)."""
     os.makedirs(work_dir, exist_ok=True)
     thaw_iso = disc_image(thaw, work_dir)
     if not is_thaw(thaw_iso):
@@ -116,8 +122,11 @@ def build(thaw, wanted, out, work_dir, level_scripts=True, keep_duplicates=False
     if os.path.abspath(out) in (os.path.abspath(thaw_iso), os.path.abspath(thaw)):
         raise ValueError("the output must not be the input disc")
     log("copying THAW and making room ...")
-    iso_build.build(thaw_iso, out)
-    sandbox_patch.apply(out)
+    if sandbox:
+        iso_build.build(thaw_iso, out)
+    else:
+        iso_build.build_keep_all(thaw_iso, out, n_new * ROOM_PER_LEVEL + 16 * 2**20)
+    sandbox_patch.apply(out, boot=sandbox, unlock=unlock_all or sandbox)
     elf_patch.apply(out)  # rail tables unpack in place (no main-heap buffer)
     d = Disc(out)
     nt = names_table(d)
@@ -126,6 +135,13 @@ def build(thaw, wanted, out, work_dir, level_scripts=True, keep_duplicates=False
     template = d.read(f"\\worlds\\worldzones\\{TEMPLATE}\\{TEMPLATE}.pak.ps2")
     ped0 = d.read(f"\\worlds\\worldzones\\{TEMPLATE}\\{TEMPLATE}ped.pak.ps2")
     sfx0 = d.read(f"\\sounds\\pak\\{TEMPLATE}_sfx.pak.ps2")
+    if unlock_all or sandbox:
+        new_pak, new_pab = level_register.edit_files(d.read("\\pak\\qb.pak.ps2"), d.read("\\pak\\qb.pab.ps2"),
+                                                     level_register.UNLOCK_EDITS, tmp_dir=work_dir)
+        d.put("\\pak\\qb.pak.ps2", new_pak)
+        d.put("\\pak\\qb.pab.ps2", new_pab)
+        d.save()
+        d = Disc(out)
     added = []
     for s, levels in srcs:
         zones = zone_names([c for c, _ in levels], taken, getattr(s, "ZONE_HINTS", None))
@@ -154,4 +170,11 @@ def build(thaw, wanted, out, work_dir, level_scripts=True, keep_duplicates=False
             d = Disc(out)
             log(f"  added as {zn} ({len(zb) / 2**20:.1f} MB, {st['textures']} textures, {st['leaves']} leaves)")
             added.append((display, zn))
+    if added and not (unlock_all or sandbox):
+        new_pak, new_pab = level_register.edit_files(d.read("\\pak\\qb.pak.ps2"), d.read("\\pak\\qb.pab.ps2"),
+                                                     level_register.open_added_edits([z for _, z in added]),
+                                                     tmp_dir=work_dir)
+        d.put("\\pak\\qb.pak.ps2", new_pak)
+        d.put("\\pak\\qb.pab.ps2", new_pab)
+        d.save()
     return added

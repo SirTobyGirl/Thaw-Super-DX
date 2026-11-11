@@ -3,13 +3,24 @@ THAW Super DX - using the tool
 You need: your own Tony Hawk's American Wasteland (NTSC-U, .iso or .chd) and the discs you want levels from
 (supported: THUG2 SLUS-20965, THUG SLUS-20731, THPS4 SLUS-20504). Python 3 with the packages in .venv; chdman for .chd input.
 
-The window (pick each disc, shrink or not, Build):
+The window (pick each disc and its levels, options, Build):
 
   ./thaw-super-dx.sh            (or: python -m thaw_sandbox)
 
 One row per game: American Wasteland (required), then Underground 2, Underground and Pro Skater 4 - fill in the
 games you want levels from and leave the rest empty. Each disc is checked when chosen (a disc in the wrong row is
-named). "Shrink the image" is on by default; "emulator-ready folder" puts the image next to a PCSX2 launcher.
+named; a .chd is extracted once). Levels... ticks single levels (all by default); a level that a newer chosen game
+remade is marked and added once, from the newest game.
+
+Options:
+  Shrink the image   off (default): the full game - boots as normal with story mode, classic mode, movies and
+                     everything else; the new levels are in High Score / Free Skate. The image grows by the levels
+                     (it must stay within a single-layer DVD: about 40 levels).
+                     on: free skate only - boots straight to the level list; story, classic, movies, cutscenes
+                     and extras are removed, music stays. About 1.9 GB.
+  Unlock all levels  on (default): every level is open in free skate from the start. Off: THAW's levels open as
+                     story mode visits them; the added levels are always open. Always on when shrinking.
+  Emulator-ready folder: the image next to a PCSX2 launcher and notes.
 
 Command line:
 
@@ -21,9 +32,11 @@ Command line:
   --add DISC[:codes]  all levels of DISC, or only the listed codes
   --keep-duplicates   a level that a newer game remade (e.g. THPS3's Airport, in THUG2) is normally imported once,
                       from the newest engine; this keeps every version
-  --shrink            drop movies, sponsor teasers, story cutscenes/extras; about 1.7 GB instead of 4 GB
+  --shrink            free skate only (boots to the level list; story, movies, cutscenes, extras removed; music
+                      kept; about 1.9 GB). Without it the full game boots as normal, levels in free skate
+  --no-unlock         THAW's levels open as story mode visits them (default: all unlocked; ignored with --shrink)
   --package DIR       emulator-ready folder: the image, play-linux.sh (PCSX2) and Android notes
-The output boots straight to the level list (free skate, all levels unlocked). Your discs are never modified.
+Your discs are never modified.
 
 (Original project blueprint below.)
 

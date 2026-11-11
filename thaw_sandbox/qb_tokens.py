@@ -97,7 +97,7 @@ def argblock(p: bytes, nm) -> str:
 def disasm(code: bytes, names=None, start: int = 0, stop: int | None = None) -> str:
     """Lenient text view of bytecode: resolves names, shows 0x4a blocks, stops at unknown tokens."""
     stop = len(code) if stop is None else stop
-    nm = (lambda h: names.get(h)) if names else (lambda h: f"0x{h:08x}")
+    nm = (lambda h: names.get(h) or f"0x{h:08x}") if names else (lambda h: f"0x{h:08x}")
     out, i = [], start
     while i < stop:
         t = code[i]

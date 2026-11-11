@@ -15,9 +15,12 @@ WORK = os.path.expanduser("~/.cache/thaw-super-dx")
 
 
 def run_build(thaw, wanted, out, work=WORK, shrink=False, package_dir=None, keep_duplicates=False,
-              level_scripts=True):
-    """The whole job (shared by the command line and the GUI) -> [(display name, zone)] added."""
-    added = B.build(thaw, wanted, out, work, level_scripts=level_scripts, keep_duplicates=keep_duplicates)
+              level_scripts=True, unlock_all=True):
+    """The whole job (shared by the command line and the GUI) -> [(display name, zone)] added.
+    shrink: free skate only (boots to the level list; story, movies, cutscenes and extras removed; music kept).
+    Without it THAW is complete and boots normally; the added levels are in free skate."""
+    added = B.build(thaw, wanted, out, work, level_scripts=level_scripts, keep_duplicates=keep_duplicates,
+                    sandbox=shrink, unlock_all=unlock_all)
     if shrink:
         from thaw_sandbox import iso_compact
         B.log("shrinking the image ...")
@@ -45,7 +48,10 @@ def main(argv=None):
     b.add_argument("--work", default=WORK,
                    help="working folder (extracted .chd images, caches)")
     b.add_argument("--shrink", action="store_true",
-                   help="cut the image down: drop the sponsor teasers and unused room (about 1.9 GB instead of 4 GB)")
+                   help="free skate only: boots to the level list; story, movies, cutscenes and extras removed, music "
+                        "kept (about 1.9 GB). Without it THAW boots normally and the levels are in free skate")
+    b.add_argument("--no-unlock", action="store_true",
+                   help="keep levels locked until visited in story mode (default: all unlocked; ignored with --shrink)")
     b.add_argument("--package", metavar="DIR",
                    help="also make an emulator-ready folder (image, Linux PCSX2 launcher, Android notes)")
     b.add_argument("--keep-duplicates", action="store_true",
@@ -65,7 +71,8 @@ def main(argv=None):
     for spec in a.add:
         path, _, codes = spec.rpartition(":") if os.path.exists(spec.rpartition(":")[0] or "\0") else (spec, "", "")
         wanted.append((path, [c for c in codes.split(",") if c] or None))
-    run_build(a.thaw, wanted, a.out, a.work, a.shrink, a.package, a.keep_duplicates, not a.no_level_scripts)
+    run_build(a.thaw, wanted, a.out, a.work, a.shrink, a.package, a.keep_duplicates, not a.no_level_scripts,
+              not a.no_unlock)
     return 0
 
 

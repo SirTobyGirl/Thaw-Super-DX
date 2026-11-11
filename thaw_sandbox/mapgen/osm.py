@@ -98,8 +98,29 @@ class Durham:  # generic, named after the first place it was made for
     pass
 
 
-def build(osm, elev, lat0, lon0, radius=150.0, n_elev=13, materials=None):
-    """osm: Overpass JSON; elev: n x n samples (OpenTopoData results); -> Scene."""
+def find_park(osm, lat0, lon0):
+    """The skatepark nearest the centre: (outline [(east m, north m)], centre (east m, north m)) or None."""
+    kx = 111320 * math.cos(math.radians(lat0))
+    best = None
+    for w in osm["elements"]:
+        t = w.get("tags", {})
+        if w["type"] != "way" or "geometry" not in w:
+            continue
+        if not (t.get("leisure") == "skatepark" or t.get("sport") in ("skateboard", "skateboarding")):
+            continue
+        poly = [((g["lon"] - lon0) * kx, (g["lat"] - lat0) * 111320) for g in w["geometry"]]
+        if len(poly) > 3 and poly[0] == poly[-1]:
+            poly = poly[:-1]
+        c = (sum(p[0] for p in poly) / len(poly), sum(p[1] for p in poly) / len(poly))
+        d = math.hypot(*c)
+        if best is None or d < best[0]:
+            best = (d, poly, c)
+    return (best[1], best[2]) if best and best[0] < 400 else None
+
+
+def build(osm, elev, lat0, lon0, radius=150.0, n_elev=13, materials=None, park_layout=None):
+    """osm: Overpass JSON; elev: n x n samples (OpenTopoData results); park_layout: skatepark pieces (park.py)
+    placed around the skatepark outline found in the data (or the centre) -> Scene."""
     sc = Scene()
     sc.materials = materials or {
         "paving": Material("paving", 160), "grass": Material("grass", 256), "asphalt": Material("asphalt", 320),
@@ -137,17 +158,68 @@ def build(osm, elev, lat0, lon0, radius=150.0, n_elev=13, materials=None):
     def hit(pt, polys):
         return any(b[0] <= pt[0] <= b[2] and b[1] <= pt[1] <= b[3] and _inside(pt, p) for b, p in polys)
 
+    # ---- skatepark area: a flat slab over the park outline (cells of the ground grid it replaces)
+    park_poly = park_c = None
+    if park_layout is not None:
+        found = find_park(osm, lat0, lon0)
+        if found:
+            park_poly = [(e * U, -n_ * U) for e, n_ in found[0]]
+            park_c = (found[1][0] * U, -found[1][1] * U)
+        else:
+            park_c = (0.0, 0.0)
+            park_poly = [(x * U, z * U) for x, z in ((-30, -30), (30, -30), (30, 30), (-30, 30))]
+        park_bb = [(bbox(park_poly), park_poly)]
+        park_y = sum(T.h(*q) for q in park_poly) / len(park_poly)
+        from thaw_sandbox.mapgen import park as PK
+        to_world = lambda e, n_: (park_c[0] + e * U, park_c[1] - n_ * U)
+        holes = [[to_world(*q) for q in h] for h in PK.slab_holes(park_layout)]
+        hole_bb = [(bbox(h), h) for h in holes]
+
     # ---- terrain
     n = int(2 * R // CELL)
     step = 2 * R / n
+    slab_cells = []
     for i in range(n):
         for j in range(n):
             x0, z0 = -R + j * step, -R + i * step
             x1, z1 = x0 + step, z0 + step
             c = ((x0 + x1) / 2, (z0 + z1) / 2)  # ground also runs under buildings: walls go below it
+            if park_poly and hit(c, park_bb):
+                slab_cells.append((x0, z0))
+                continue
             mat = "grass" if hit(c, bb_grass) else "paving"
             # quad with up normal: (x0,z0) (x0,z1) (x1,z1) (x1,z0) is counter-clockwise seen from above
             sc.quad((x0, T.h(x0, z0), z0), (x0, T.h(x0, z1), z1), (x1, T.h(x1, z1), z1), (x1, T.h(x1, z0), z0), mat)
+    if park_poly:
+        k = 4
+        sub = step / k
+        for x0, z0 in slab_cells:
+            subs = []
+            for a in range(k):
+                for b in range(k):
+                    sx, sz = x0 + b * sub, z0 + a * sub
+                    corners = [(sx, sz), (sx, sz + sub), (sx + sub, sz + sub), (sx + sub, sz)]
+                    if not any(hit(q, hole_bb) for q in corners):
+                        subs.append(corners)
+            if len(subs) == k * k:  # no bowl opening here: one quad
+                subs = [[(x0, z0), (x0, z0 + step), (x0 + step, z0 + step), (x0 + step, z0)]]
+            for corners in subs:
+                sc.quad(*[(x, park_y, z) for x, z in corners], "paving", face=(0, 1, 0))
+            for (ex, ez), (fx, fz) in (((x0, z0), (x0 + step, z0)), ((x0 + step, z0), (x0 + step, z0 + step)),
+                                       ((x0 + step, z0 + step), (x0, z0 + step)), ((x0, z0 + step), (x0, z0))):
+                mid = ((ex + fx) / 2, (ez + fz) / 2)  # slab edge where it meets the sloped ground: a small step
+                out = (mid[0] - (x0 + step / 2), 0, mid[1] - (z0 + step / 2))
+                ny = (mid[0] + out[0] * 0.05, mid[1] + out[2] * 0.05)
+                if (ny[0] - step / 2, ny[1] - step / 2) and any(
+                        abs(ny[0] - (cx + step / 2)) < step / 2 and abs(ny[1] - (cz + step / 2)) < step / 2
+                        for cx, cz in slab_cells):
+                    continue
+                ha, hb = T.h(ex, ez), T.h(fx, fz)
+                lo_a, lo_b = min(ha, park_y) - 4, min(hb, park_y) - 4
+                hi_a, hi_b = max(ha, park_y), max(hb, park_y)
+                if hi_a - lo_a > 6 or hi_b - lo_b > 6:
+                    sc.quad((ex, lo_a, ez), (fx, lo_b, fz), (fx, hi_b, fz), (ex, hi_a, ez), "stone", face=out)
+        PK.build(sc, park_layout, to_world, park_y)
 
     # ---- ribbons (roads, paths) with mitred joins; kerbs along roads
     def dense(pts, step=220.0):
@@ -321,7 +393,10 @@ def build(osm, elev, lat0, lon0, radius=150.0, n_elev=13, materials=None):
                 continue
             y = min(T.h(*q) for q in foot) - 4
             sc.quarter_pipe(p0, p1, y, QP_R, QP_H, QP_DECK, "stone", deck_mat="paving")
-    sc.start((0.0, T.h(0, 0) + 10, 0.0), 0.0)
+    if park_c is not None:
+        sc.starts.append(((park_c[0], park_y + 10, park_c[1]), 0.0))
+    else:
+        sc.start((0.0, T.h(0, 0) + 10, 0.0), 0.0)
     return sc
 
 

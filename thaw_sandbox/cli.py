@@ -54,7 +54,7 @@ def main(argv=None):
                    help="keep levels locked until visited in story mode (default: all unlocked; ignored with --shrink)")
     b.add_argument("--package", metavar="DIR",
                    help="also make an emulator-ready folder (image, Linux PCSX2 launcher, Android notes)")
-    b.add_argument("--generate", action="append", default=[], metavar="LOCATION[;RADIUS[;NAME]]",
+    b.add_argument("--generate", action="append", default=[], metavar="LOCATION[;RADIUS[;NAME[;LAYOUT.json]]]",
                    help="generate a level from a real place (OpenStreetMap + elevation, downloaded): a plus code "
                         "(9C6WQCGF+QP, or QCGF+QP Durham) or 'lat, lon'; radius in metres (default 150)")
     b.add_argument("--keep-duplicates", action="store_true",
@@ -80,7 +80,8 @@ def main(argv=None):
         for spec in a.generate:
             parts = spec.split(";")
             gen.append(real_place(parts[0], float(parts[1]) if len(parts) > 1 and parts[1] else 150.0,
-                                  parts[2] if len(parts) > 2 else None, a.work))
+                                  parts[2] if len(parts) > 2 and parts[2] else None, a.work,
+                                  parts[3] if len(parts) > 3 and parts[3] else None))
     run_build(a.thaw, wanted, a.out, a.work, a.shrink, a.package, a.keep_duplicates, not a.no_level_scripts,
               not a.no_unlock, gen)
     return 0

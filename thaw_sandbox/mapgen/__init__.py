@@ -48,14 +48,19 @@ def thaw_textures(disc, picks=THAW_PICKS, zone_name="z_bh"):
     return {m: TT.extract_native(tex, offs, sel[i]) for m, i in picks.items()}
 
 
-def real_place(location, radius=150.0, name=None, work="."):
-    """A generated level spec (code, display name, make(disc)) for a real location."""
+def real_place(location, radius=150.0, name=None, work=".", layout=None):
+    """A generated level spec (code, display name, make(disc)) for a real location; layout: skatepark pieces
+    (dict, or a path to the layout editor's JSON) placed in the skatepark there."""
     from thaw_sandbox.mapgen import fetch, osm
 
     def make(disc):
         lat, lon = fetch.resolve(location)
         data, elev = fetch.fetch(lat, lon, radius, f"{work}/mapdata")
-        return osm.build(data, elev, lat, lon, radius), thaw_textures(disc)
+        lay = layout
+        if isinstance(lay, str):
+            import json
+            lay = json.load(open(lay))
+        return osm.build(data, elev, lat, lon, radius, park_layout=lay), thaw_textures(disc)
     place = re.sub(r"[23456789CFGHJMPQRVWX]{2,8}\+[23456789CFGHJMPQRVWX]{2,3}|-?\d+(\.\d+)?", "", location, flags=re.I)
     disp = name or place.strip(" ,;") or "Real Place"
     return ("gen" + hashlib.sha1(location.encode()).hexdigest()[:2], disp[:20], make)

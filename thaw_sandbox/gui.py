@@ -270,7 +270,7 @@ class App:
                   foreground=GREY, wraplength=700).grid(row=2 + 2 * len(sources.ADAPTERS), column=0, columnspan=5,
                                                         sticky="w", pady=(6, 0))
 
-        g = ttk.LabelFrame(f, text="Levels from real places (generated, needs internet)", padding=10)
+        g = ttk.LabelFrame(f, text="Levels from real places - EXPERIMENTAL (generated, needs internet)", padding=10)
         g.grid(row=3, column=0, sticky="ew", pady=(10, 0))
         g.columnconfigure(1, weight=1)
         ttk.Label(g, text="Location").grid(row=0, column=0, sticky="w", padx=(0, 8))
@@ -287,11 +287,14 @@ class App:
         ttk.Entry(g, textvariable=self.place_name, width=14).grid(row=0, column=5)
         self.add_btn = ttk.Button(g, text="Add place", command=self.add_place)
         self.add_btn.grid(row=0, column=6, padx=(8, 0))
-        self.places = [tuple(x) for x in st.get("places", [])]  # [(location, size m, name)]
+        self.places = [tuple(x) + (None,) * (4 - len(x)) for x in st.get("places", [])]  # (loc, size m, name, layout)
         self.place_list = tk.Listbox(g, height=3)
         self.place_list.grid(row=1, column=0, columnspan=6, sticky="ew", pady=(6, 0))
-        ttk.Button(g, text="Remove", command=self.remove_place).grid(row=1, column=6, sticky="n", padx=(8, 0),
-                                                                      pady=(6, 0))
+        pb = ttk.Frame(g)
+        pb.grid(row=1, column=6, sticky="n", padx=(8, 0), pady=(6, 0))
+        ttk.Button(pb, text="Remove", command=self.remove_place).pack(fill="x")
+        self.layout_btn = ttk.Button(pb, text="Skatepark layout…", command=self.edit_layout)
+        self.layout_btn.pack(fill="x", pady=(4, 0))
         self.place_note = ttk.Label(g, foreground=GREY, wraplength=700, text=(
             "A plus code (9C6WQCGF+QP, or QCGF+QP Durham) or 'lat, lon'. Streets, buildings, steps, benches and hills "
             "come from OpenStreetMap and elevation data; textures from your American Wasteland disc."))
@@ -349,8 +352,15 @@ class App:
     # ---- real places
     def refresh_places(self):
         self.place_list.delete(0, "end")
-        for loc, size, name in self.places:
-            self.place_list.insert("end", f"{name}  -  {loc}  ({size} m square)")
+        for loc, size, name, lay in self.places:
+            extra = ""
+            if lay and os.path.exists(lay):
+                try:
+                    n = len(json.load(open(lay)).get("pieces", []))
+                    extra = f"  -  skatepark layout: {n} pieces"
+                except Exception:
+                    extra = "  -  skatepark layout (unreadable)"
+            self.place_list.insert("end", f"{name}  -  {loc}  ({size} m square){extra}")
 
     def add_place(self):
         loc = self.place.get().strip()
@@ -364,23 +374,106 @@ class App:
         def work():
             from thaw_sandbox.mapgen import fetch, real_place
             try:
-                lat, lon = fetch.resolve(loc)
-                self.q.put(("place", (loc, size, name or real_place(loc)[1], lat, lon, None)))
+                cands = fetch.candidates(loc)
+                self.q.put(("place", (loc, size, name or real_place(loc)[1], cands, None)))
             except Exception as e:
-                self.q.put(("place", (loc, size, name, None, None, e)))
+                self.q.put(("place", (loc, size, name, None, e)))
         threading.Thread(target=work, daemon=True).start()
 
     def on_place(self, x):
-        loc, size, name, lat, lon, err = x
+        loc, size, name, cands, err = x
         self.add_btn.configure(state="normal")
         if err:
             self.place_note.configure(text=f"✖ {err}", foreground=BAD)
             return
-        self.places.append((loc, size, name[:20]))
+        if len(cands) > 1:
+            pick = self.choose_place(cands)
+            if pick is None:
+                self.place_note.configure(text="Cancelled.", foreground=GREY)
+                return
+            cands = [cands[pick]]
+        from thaw_sandbox.mapgen import fetch
+        label, lat, lon = cands[0]
+        if label != loc:  # a short code: keep the full code so the place is unambiguous
+            loc = f"{fetch.encode(lat, lon)}"
+        self.add_resolved(loc, size, name, lat, lon)
+
+    def choose_place(self, cands):
+        """Modal list of places a short plus code may mean -> index or None."""
+        t = tk.Toplevel(self.root)
+        t.title("Which place?")
+        t.transient(self.root)
+        ttk.Label(t, text="That short plus code fits several places. Which one?", padding=10).pack(anchor="w")
+        lb = tk.Listbox(t, width=80, height=min(8, len(cands)))
+        for label, lat, lon in cands:
+            lb.insert("end", f"{label}   ({lat:.4f}, {lon:.4f})")
+        lb.pack(padx=10, fill="both", expand=True)
+        lb.selection_set(0)
+        res = [None]
+
+        def ok(_e=None):
+            sel = lb.curselection()
+            res[0] = sel[0] if sel else None
+            t.destroy()
+        b = ttk.Frame(t, padding=10)
+        b.pack(fill="x")
+        ttk.Button(b, text="OK", command=ok).pack(side="right")
+        ttk.Button(b, text="Cancel", command=t.destroy).pack(side="right", padx=6)
+        lb.bind("<Double-Button-1>", ok)
+        t.grab_set()
+        self.root.wait_window(t)
+        return res[0]
+
+    def add_resolved(self, loc, size, name, lat, lon):
+        self.places.append((loc, size, name[:20], None))
         self.refresh_places()
         self.place.set("")
         self.place_name.set("")
         self.place_note.configure(text=f"✔ Added {name} ({lat:.5f}, {lon:.5f}).", foreground=GOOD)
+
+    def edit_layout(self):
+        sel = self.place_list.curselection()
+        if not sel:
+            self.place_note.configure(text="Select a place in the list first.", foreground=BAD)
+            return
+        i = sel[0]
+        loc, size, name, lay = self.places[i]
+        self.place_note.configure(text=f"Loading the map of {name}…", foreground=GREY)
+
+        def work():
+            from thaw_sandbox.mapgen import fetch
+            try:
+                lat, lon = fetch.resolve(loc)
+                data, _ = fetch.fetch(lat, lon, size / 2, os.path.join(cli.WORK, "mapdata"))
+                self.q.put(("editor", (i, data, lat, lon, None)))
+            except Exception as e:
+                self.q.put(("editor", (i, None, None, None, e)))
+        threading.Thread(target=work, daemon=True).start()
+
+    def on_editor(self, x):
+        i, data, lat, lon, err = x
+        if err:
+            self.place_note.configure(text=f"✖ {err}", foreground=BAD)
+            return
+        from thaw_sandbox import park_editor as PE
+        loc, size, name, lay = self.places[i]
+        ctx = PE.context(data, lat, lon)
+        layout = None
+        if lay and os.path.exists(lay):
+            layout = json.load(open(lay))
+        if lay is None:
+            os.makedirs(PE.PARKS_DIR, exist_ok=True)
+            lay = os.path.join(PE.PARKS_DIR, "".join(c if c.isalnum() else "_" for c in name) + ".json")
+
+        def saved(path, i=i):
+            l_, s_, n_, _ = self.places[i]
+            self.places[i] = (l_, s_, n_, path)
+            self.refresh_places()
+            _save_settings(self.settings())
+        PE.ParkEditor(self.root, name, ctx, layout, lay, saved)
+        self.place_note.configure(text=("Skatepark outline from OpenStreetMap." if ctx["outline"] else
+                                        "No skatepark is mapped here: pieces are placed around the location."),
+                                  foreground=GREY)
 
     def remove_place(self):
         for i in reversed(self.place_list.curselection()):
@@ -476,7 +569,8 @@ class App:
         self.state.set("Building…")
         shrink = self.shrink.get()
         from thaw_sandbox.mapgen import real_place
-        gen = [real_place(loc, size / 2, name, cli.WORK) for loc, size, name in self.places]
+        gen = [real_place(loc, size / 2, name, cli.WORK, lay if lay and os.path.exists(lay) else None)
+               for loc, size, name, lay in self.places]
         self.total += len(gen)
         self.bar.configure(maximum=self.total + 2)
         args = (self.thaw.get().strip(), wanted, out, cli.WORK, shrink, pkg, False, True,

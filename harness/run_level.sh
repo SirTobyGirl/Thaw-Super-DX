@@ -11,7 +11,7 @@ sleep 1
 sleep 42
 for i in $(seq 1 "$N"); do timeout 10 $H/vk.sh Down; done; sleep 1
 timeout 30 $H/shot.sh "${S}_list" >/dev/null
-timeout 10 $H/vk.sh A; sleep 28
+timeout 10 $H/vk.sh A; sleep ${LOADWAIT:-28}
 timeout 30 $H/shot.sh "$S" >/dev/null
 grep -E 'loadscrn_|worldZones/z_|Unknown R5900|Trap|TLB Miss' "$L" | grep -v GSScreenshot | tail -5 | cut -c1-110
 echo "crash markers: $(grep -cE 'Unknown R5900|TLB Miss' "$L")"

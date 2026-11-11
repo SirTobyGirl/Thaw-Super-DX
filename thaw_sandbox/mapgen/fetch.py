@@ -63,6 +63,42 @@ def _olc_prefix(lat, lon):
     return out
 
 
+def encode(lat, lon):
+    """Full 10-digit plus code for a point."""
+    lat, lon = min(max(lat + 90, 0), 179.999999), (lon + 180) % 360
+    out, res = "", 20.0
+    for i in range(5):
+        a, b = int(lat // res), int(lon // res)
+        out += OLC[a] + OLC[b]
+        lat -= a * res
+        lon -= b * res
+        res /= 20
+        if i == 3:
+            out += "+"
+    return out
+
+
+def candidates(location):
+    """[(label, lat, lon)]: one for a full code or 'lat, lon'; for a short code, one per distinct place match."""
+    s = location.strip()
+    m = re.match(r"([23456789CFGHJMPQRVWX]{2,8}\+[23456789CFGHJMPQRVWX]{2,3})\s*,?\s*(.*)$", s, re.I)
+    if not m or m.group(1).index("+") == 8 or not m.group(2).strip():
+        lat, lon = resolve(s)
+        return [(s, lat, lon)]
+    code, place = m.group(1).upper(), m.group(2).strip()
+    r = _get("https://nominatim.openstreetmap.org/search?" + urllib.parse.urlencode({"q": place, "format": "json",
+                                                                                     "limit": 8}))
+    out = []
+    for x in r:
+        rlat, rlon = float(x["lat"]), float(x["lon"])
+        lat, lon = _olc_decode(_olc_prefix(rlat, rlon)[:8 - code.index("+")] + code)
+        if all(math.hypot(lat - a, (lon - b) * math.cos(math.radians(lat))) > 0.2 for _, a, b in out):
+            out.append((x["display_name"], lat, lon))
+    if not out:
+        raise ValueError(f"place not found: {place}")
+    return out
+
+
 def geocode(place):
     r = _get("https://nominatim.openstreetmap.org/search?" + urllib.parse.urlencode({"q": place, "format": "json",
                                                                                      "limit": 1}))

@@ -12,7 +12,7 @@ games you want levels from and leave the rest empty. Each disc is checked when c
 named; a .chd is extracted once). Levels... ticks single levels (all by default); a level that a newer chosen game
 remade is marked and added once, from the newest game.
 
-Levels from real places (needs internet): type a plus code (9C6WQCGF+QP, or QCGF+QP Durham) or "lat, lon",
+Levels from real places - EXPERIMENTAL (needs internet): type a plus code (9C6WQCGF+QP, or QCGF+QP Durham) or "lat, lon",
 pick a size (200-400 m square) and Add place. At build time the tool downloads OpenStreetMap features and elevation
 for that square and generates a level: hills, roads with grindable kerbs, cobbled footways, buildings from their
 footprints, steps with handrails, benches and walls as ledges, quarter pipes along the edges; textures come from

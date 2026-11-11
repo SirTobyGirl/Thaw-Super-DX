@@ -27,7 +27,8 @@ def _objects(tris):
     by = collections.defaultdict(list)
     for t in tris:
         c = [sum(p[i] for p in t.p) / 3 for i in range(3)]
-        by[(math.floor(c[0] / CELL), math.floor(c[2] / CELL))].append(t)
+        # height too: fixed verts are u16 / 16 from the object's bbox min (tall levels)
+        by[(math.floor(c[0] / CELL), math.floor(c[2] / CELL), math.floor(c[1] / CELL))].append(t)
     objs = []
     for key in sorted(by):
         cur, idx, verts = [], {}, []

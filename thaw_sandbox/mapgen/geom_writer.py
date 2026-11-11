@@ -98,9 +98,10 @@ def _pack_leaves(strips):
     by = collections.defaultdict(list)
     for mat, vs in strips:
         c = tuple(sum(v[0][i] for v in vs) / len(vs) for i in range(3))
-        by[(mat, math.floor(c[0] / CELL), math.floor(c[2] / CELL))].append(vs)
+        # height is part of the bucket too: a leaf's positions are 16-bit offsets from its centre (tall levels)
+        by[(mat, math.floor(c[0] / CELL), math.floor(c[2] / CELL), math.floor(c[1] / CELL))].append(vs)
     leaves = []
-    for (mat, cx, cz), group in by.items():
+    for (mat, cx, cz, _cy), group in by.items():
         cur, n = [], 0
         for vs in group:
             if n + len(vs) > MAX_VERTS and cur:

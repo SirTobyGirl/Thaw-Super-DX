@@ -91,6 +91,9 @@ class _P:
                 else:  # bare name = flag
                     s.items.append((0, Name(self.u32(tk))))
                 continue
+            if tk.id == 0x2C:  # <...> inside a struct (THPS3 Cruise Ship node scripts): nothing to keep
+                self.next()
+                continue
             if tk.id in (3, 5, 10, 23, 26, 27, 28, 30, 31):
                 # bare value inside a struct (Training's breakable objects hold script-like lines such as
                 # "Wait 10 seconds" in a Shatter { } block): keep it as an unnamed item

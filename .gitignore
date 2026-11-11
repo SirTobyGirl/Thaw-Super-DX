@@ -7,3 +7,7 @@ __pycache__/
 tools/*/
 harness/*.jpg
 harness/vk.fifo
+
+# packaged executables (packaging/build_linux.sh)
+/build/
+/dist/

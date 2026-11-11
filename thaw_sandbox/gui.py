@@ -19,7 +19,7 @@ TITLE = "THAW Super DX"
 SETTINGS = os.path.expanduser("~/.config/thaw-super-dx/gui.json")
 DISC_TYPES = [("PS2 disc images", "*.iso *.ISO *.chd *.CHD"), ("All files", "*")]
 ISO_TYPES = [("ISO image", "*.iso"), ("All files", "*")]
-GAME_NAMES = {"THUG2": "Underground 2", "THUG": "Underground", "THPS4": "Pro Skater 4"}
+GAME_NAMES = {"THUG2": "Underground 2", "THUG": "Underground", "THPS4": "Pro Skater 4", "THPS3": "Pro Skater 3"}
 GREY, GOOD, BAD = "gray", "#2a7a2a", "#b02020"
 
 

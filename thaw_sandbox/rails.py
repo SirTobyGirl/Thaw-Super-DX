@@ -26,6 +26,27 @@ K_CLASS, K_NAME, K_POS, K_LINKS, K_TERRAIN, K_CLUSTER, K_TYPE = (
     H("Class"), H("name"), H("pos"), H("links"), H("TerrainType"), H("Cluster"), H("Type"))
 LADDER = H("Ladder")
 
+# Rails must use grind terrains: THAW's sound table (SoundActions) only has SKATE_GRIND sounds for the
+# TERRAIN_GRIND* types. THPS4 rails name surface terrains (CONCSMOOTH, METALSMOOTH, WOOD; THUG2 Training
+# METALSMOOTH): grinding them read a NULL sound struct (FUN_0027ad78 -> 0x2ae610 crash).
+GRIND = ("CONC", "METAL", "ELECTRICWIRE", "CHAIN", "PLASTIC", "WOODRAILING", "BANYONTREE", "CABLE", "WOOD",
+         "CHAINLINK", "WOODLOG", "WIRE", "CATWALK", "BRASSRAIL", "NEONLIGHT", "GLASSMONSTER")
+SURFACE = {"CONCSMOOTH": "CONC", "CONCROUGH": "CONC", "SIDEWALK": "CONC", "BRICK": "CONC", "TILE": "CONC",
+           "ASPHALT": "CONC", "ROCK": "CONC", "WETCONC": "CONC", "DIRT": "CONC",
+           "DIRTPACKED": "CONC", "GRAVEL": "CONC", "SAND": "CONC", "GRASS": "CONC", "GRASSDRIED": "CONC",
+           "METALSMOOTH": "METAL", "METALROUGH": "METAL", "METALGRATING": "METAL", "METALTIN": "METAL",
+           "METALCORRUGATED": "METAL", "METALFENCE": "METAL", "CONVEYOR": "METAL", "CHAINLINK": "CHAINLINK",
+           "WOOD": "WOOD", "WOODPLYWOOD": "WOOD", "WOODPIER": "WOOD", "WOODSHINGLE": "WOOD",
+           "WOODMASONITE": "WOOD", "WOODFLIMSY": "WOOD", "PLEXIGLASS": "PLASTIC", "FIBERGLASS": "PLASTIC",
+           "CARPET": "PLASTIC"}
+GRIND_CRC = {H(f"TERRAIN_GRIND{g}") for g in GRIND} | {H("TERRAIN_DEFAULT")}  # THAW rails use DEFAULT too
+TO_GRIND = {H(f"TERRAIN_{k}"): H(f"TERRAIN_GRIND{v}") for k, v in SURFACE.items()}
+DEFAULT_GRIND = H("TERRAIN_GRINDCONC")
+
+
+def grind_terrain(crc):
+    return crc if crc in GRIND_CRC else TO_GRIND.get(crc, DEFAULT_GRIND)
+
 
 def _flat(s, structs, depth=0):
     out = []
@@ -82,7 +103,7 @@ def build(nodes, structs=None) -> bytes:
         nxt = rec_of[j] if j is not None else 0
         prv = rec_of[prev[i]] if i in prev else 0
         flags |= (0x200 if j is not None else 0) | (0x400 if i in prev else 0)
-        terrain = getattr(d.get(K_TERRAIN), "crc", 0) if not flags & 0x10 else 0
+        terrain = grind_terrain(getattr(d.get(K_TERRAIN), "crc", 0)) if not flags & 0x10 else 0
         cluster = getattr(d.get(K_CLUSTER), "crc", 0)
         out += struct.pack("<16f6I", *lo, 1.0, *hi, 1.0, *p, 1.0, 0.0, 0.0, 0.0, 0.0,
                            flags, d[K_NAME].crc, terrain, cluster, nxt, prv)

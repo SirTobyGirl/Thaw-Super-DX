@@ -57,6 +57,11 @@ def _match_textures(b, leaves, textures):
     return out
 
 
+# THPS4 sets 0x4000 in the flag word of every strip-restart vertex (0xc000); THAW's data never does (Kyoto: 0x8000
+# restart, 0x20 odd-vertex parity) and its microcode gives the bit another meaning: THPS4 levels lost surfaces
+W_CLEAR = 0x4000
+
+
 def _rebuild_chunk(b, o):
     """Leaf chunk at file offset o -> new chunk bytes with V2_16 UV unpacks widened to V2_32."""
     lo = struct.unpack_from("<I", b, o)[0]
@@ -72,6 +77,13 @@ def _rebuild_chunk(b, o):
             vals = struct.unpack_from(f"<{2 * num}{'H' if usn else 'h'}", b, p + 4)
             body += struct.pack("<I", (w & ~0x0F000000) | (0x04 << 24))
             body += struct.pack(f"<{2 * num}{'I' if usn else 'i'}", *vals)
+        elif cmd >= 0x60 and cmd & 0x6F == 0x6D:  # V4_16 positions: x, y, z, flags
+            num = ((w >> 16) & 0xFF) or 256
+            vals = list(struct.unpack_from(f"<{4 * num}H", b, p + 4))
+            for i in range(3, 4 * num, 4):
+                vals[i] &= ~W_CLEAR & 0xFFFF
+            body += struct.pack("<I", w) + struct.pack(f"<{4 * num}H", *vals)
+            body += b[p + 4 + 8 * num:nxt]
         else:
             body += b[p:nxt]
     body += bytes(-(8 + len(body)) % 16)  # VIF NOPs up to the qword

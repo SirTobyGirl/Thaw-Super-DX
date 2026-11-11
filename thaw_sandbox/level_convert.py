@@ -10,7 +10,7 @@ The result still carries the template's internal names; zone_rename.rename_zone 
 """
 import struct
 
-from thaw_sandbox import col as CL, convert_thug2 as C, geom as GM, pak, qb_data as QD, qb_file as F
+from thaw_sandbox import classic, col as CL, convert_thug2 as C, geom as GM, pak, qb_data as QD, qb_file as F
 from thaw_sandbox import gaps, prefix_table, qb_parser as Q, rails, thaw_tex as TT, thug2_qb, thug2_tex as T2, zone
 
 # THUG2 node classes whose models do not exist in THAW: keep the nodes (link indices) but stop them spawning
@@ -44,10 +44,14 @@ def _named(zb, tab):
 
 
 def convert_nodes(qb_bytes, code, na_zone, orig_crc, flip_z=False, neutralise=(), trigger_classes=None,
-                  with_rails=False):
+                  with_rails=False, goal_objects=False, remap=None):
     """THUG2 node file -> THAW node file (renamed node array, inlined includes, neutralised THUG2-only classes,
-    sorted name index); with_rails: -> (node file, rail table built from the converted nodes)."""
+    sorted name index); with_rails: -> (node file, rail table built from the converted nodes).
+    goal_objects: the classic goal objects (SKATE and COMBO letters, secret tape) keep their models: THAW has them.
+    remap: name checksums to swap in the node file's scripts (classic.remap_table)."""
     _, items = F.read(C.convert(qb_bytes, "x")[0])
+    if remap:
+        classic.remap_items(items, remap)
     old_na, new_na = {Q.qbcrc(f"{code}_NodeArray"), Q.qbcrc("NodeArray")}, Q.qbcrc(f"{na_zone}_NodeArray")
     for it in items:  # THUG2: <code>_NodeArray, THPS4: NodeArray
         if it.name in old_na:
@@ -73,9 +77,12 @@ def convert_nodes(qb_bytes, code, na_zone, orig_crc, flip_z=False, neutralise=()
                           for k, v in node.items]
     CLS, CAS, MODEL, WP = Q.qbcrc("Class"), Q.qbcrc("CreatedAtStart"), Q.qbcrc("model"), Q.qbcrc("Waypoint")
     drop, keep_class = {Q.qbcrc(c) for c in NEUTRALISE + tuple(neutralise)}, {Q.qbcrc("GameObject")}
+    TYPE, goal_types = Q.qbcrc("Type"), {Q.qbcrc(t) for t in classic.GOAL_OBJECT_TYPES} if goal_objects else ()
     for s in list(na.items) + [it.value for it in items if isinstance(it.value, QD.Struct)]:
         c = next((getattr(v, "crc", None) for k, v in s.items if k == CLS), None)
         if c not in drop:
+            continue
+        if c in keep_class and any(k == TYPE and getattr(v, "crc", None) in goal_types for k, v in s.items):
             continue
         s.items = [(k, v) for k, v in s.items if k != MODEL and not (k == 0 and getattr(v, "crc", None) == CAS)]
         if c not in keep_class:
@@ -154,15 +161,20 @@ def convert_textures_and_geometry(tex_bytes, geom_bytes, resolve_refs, budget=0)
     return tex, geom, st
 
 
-def convert_level(template_zone, files, code, zone_name, resolve_refs, template="z_ja", level_scripts=True):
+def convert_level(template_zone, files, code, zone_name, resolve_refs, template="z_ja", level_scripts=True,
+                  classic_consts=None):
+    """classic_consts: THUG2's score globals (classic.thug2_constants) -> the level gets its classic goals
+    (classic.convert_goals) in the template's Goals script; None: no goals."""
     zb = template_zone
+    with_goals = classic_consts is not None and level_scripts and bool(files.get("scripts"))
+    remap = classic.remap_table(code, zone_name) if with_goals else None
     tab = zone.entries(zb)
     big = _biggest(zb, tab)
     p0 = pak.data_pos(big[".nqb"], 0)
     orig_crc, _ = F.read(zb[p0:p0 + big[".nqb"].size])
     nqb, rnb, node_items = convert_nodes(files["qb"], code, zone_name, orig_crc, flip_z=files.get("flip_z", False),
                              neutralise=files.get("neutralise", ()), trigger_classes=files.get("trigger_classes"),
-                             with_rails=True)
+                             with_rails=True, goal_objects=with_goals, remap=remap)
     tex, geom, st = convert_textures_and_geometry(files["tex"], files["geom"], resolve_refs)
     rep = {big[".tex"].pos: tex, big[".geom"].pos: geom, big[".col"].pos: CL.thug2_to_thaw(files["col"]),
            big[".nqb"].pos: nqb}
@@ -187,6 +199,13 @@ def convert_level(template_zone, files, code, zone_name, resolve_refs, template=
         if SCRIPT_FILTER:  # bisection hook (harness)
             extra = SCRIPT_FILTER(extra)
         sitems += extra
+        st["classic goals"] = 0
+        if with_goals:
+            src = thug2_qb.parse(files["scripts"]).scripts.get(Q.qbcrc(f"{code}_Goals"))
+            body, st["classic goals"] = classic.convert_goals(src, zone_name, classic_consts) if src else (None, 0)
+            if body:
+                classic.remap_items(extra, remap)
+                next(it for it in sitems if it.name == Q.qbcrc(f"{template}_Goals")).value = C.script_body(body)
     rep[se.pos] = F.write(scrc, sitems)
     # gap checklist: the template's names Kyoto's gaps under z_ja; the level's own come from its EndGap calls
     gap_list = gaps.collect(sitems) if level_scripts else []

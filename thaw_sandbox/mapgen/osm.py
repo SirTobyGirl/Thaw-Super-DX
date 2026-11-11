@@ -24,6 +24,7 @@ ROAD_W = {"trunk": 9.0, "primary": 8.0, "secondary": 7.5, "tertiary": 7.0, "uncl
           "residential": 6.0, "service": 4.0, "living_street": 5.0}
 PATH_W = {"pedestrian": 6.0, "footway": 2.5, "path": 2.0, "cycleway": 2.5}
 STOREY = 3.3
+KERB_W, KERB_H = 14.0, 7.0  # kerb strip width / height (units)
 GRASS = {("landuse", "grass"), ("leisure", "park"), ("landuse", "recreation_ground"), ("leisure", "garden"),
          ("natural", "grassland"), ("landuse", "meadow"), ("natural", "wood")}
 
@@ -148,34 +149,86 @@ def build(osm, elev, lat0, lon0, radius=150.0, n_elev=13, materials=None):
             # quad with up normal: (x0,z0) (x0,z1) (x1,z1) (x1,z0) is counter-clockwise seen from above
             sc.quad((x0, T.h(x0, z0), z0), (x0, T.h(x0, z1), z1), (x1, T.h(x1, z1), z1), (x1, T.h(x1, z0), z0), mat)
 
-    # ---- ribbons (roads, paths)
-    def ribbon(pts, width, mat, lift):
-        hw = width * U / 2
+    # ---- ribbons (roads, paths) with mitred joins; kerbs along roads
+    def dense(pts, step=220.0):
         seq = []
         for a, b in zip(pts, pts[1:]):
-            L = math.dist(a, b)
-            k = max(1, math.ceil(L / 220))
+            k = max(1, math.ceil(math.dist(a, b) / step))
             seq += [(a[0] + (b[0] - a[0]) * s / k, a[1] + (b[1] - a[1]) * s / k) for s in range(k)]
         seq.append(pts[-1])
-        seq = [p for p in seq if inb(p, hw)]
+        out = [seq[0]]
+        for p in seq[1:]:
+            if math.dist(p, out[-1]) > 1:
+                out.append(p)
+        return out
+
+    def offsets(seq, hw):
+        """Per-vertex left offsets (mitred, clamped)."""
+        segs = []
         for a, b in zip(seq, seq[1:]):
             L = math.dist(a, b)
-            if L < 1:
-                continue
-            nx, nz = -(b[1] - a[1]) / L * hw, (b[0] - a[0]) / L * hw
-            q = [(a[0] + nx, a[1] + nz), (b[0] + nx, b[1] + nz), (b[0] - nx, b[1] - nz), (a[0] - nx, a[1] - nz)]
-            p3 = [(x, T.h(x, z) + lift, z) for x, z in q]
-            sc.quad(*p3, mat, face=(0, 1, 0), collide=False)
+            segs.append((-(b[1] - a[1]) / L, (b[0] - a[0]) / L))
+        out = []
+        for i in range(len(seq)):
+            ns = [segs[j] for j in (i - 1, i) if 0 <= j < len(segs)]
+            mx, mz = sum(n[0] for n in ns), sum(n[1] for n in ns)
+            m = math.hypot(mx, mz) or 1.0
+            mx, mz = mx / m, mz / m
+            cos = max(0.5, mx * ns[0][0] + mz * ns[0][1])
+            out.append((mx * hw / cos, mz * hw / cos))
+        return out
 
+    def ribbon(seq, hw, mat, lift):
+        offs = offsets(seq, hw)
+        for i in range(len(seq) - 1):
+            (ax, az), (bx, bz) = seq[i], seq[i + 1]
+            (oax, oaz), (obx, obz) = offs[i], offs[i + 1]
+            q = [(ax + oax, az + oaz), (bx + obx, bz + obz), (bx - obx, bz - obz), (ax - oax, az - oaz)]
+            sc.quad(*[(x, T.h(x, z) + lift, z) for x, z in q], mat, face=(0, 1, 0), collide=False)
+        return offs
+
+    roads, paths = [], []
     for w in ways:
         t = w.get("tags", {})
         h = t.get("highway")
         pts = [P(g["lat"], g["lon"]) for g in w["geometry"]]
         if h in ROAD_W:
-            ribbon(pts, ROAD_W[h], "asphalt", LIFT["road"])
+            roads.append((pts, ROAD_W[h] * U / 2))
         elif h in PATH_W and t.get("area") != "yes":
-            ribbon(pts, PATH_W[h], "path", LIFT["path"])
+            paths.append((pts, PATH_W[h] * U / 2))
 
+    def clip(seq, m):
+        """Pieces of seq inside the level (margin m)."""
+        runs, cur = [], []
+        for p in seq:
+            if inb(p, m):
+                cur.append(p)
+            elif cur:
+                runs.append(cur)
+                cur = []
+        if cur:
+            runs.append(cur)
+        return [r for r in runs if len(r) >= 2]
+
+    def on_road(p, pad):
+        for pts, hw in roads:
+            for a, b in zip(pts, pts[1:]):
+                ex, ez = b[0] - a[0], b[1] - a[1]
+                L2 = ex * ex + ez * ez or 1.0
+                t = max(0.0, min(1.0, ((p[0] - a[0]) * ex + (p[1] - a[1]) * ez) / L2))
+                if math.dist(p, (a[0] + ex * t, a[1] + ez * t)) < hw + pad:
+                    return True
+        return False
+
+    for pts, hw in paths:
+        for run in clip(dense(pts), hw):
+            ribbon(run, hw, "path", LIFT["path"])
+    for pts, hw in roads:
+        for run in clip(dense(pts), hw + KERB_W):
+            offs = ribbon(run, hw, "asphalt", LIFT["road"])
+            for side in (1, -1):
+                edge = [(p[0] + side * o[0], p[1] + side * o[1]) for p, o in zip(run, offs)]
+                kerbs(sc, T, edge, run, side, lambda q: on_road(q, 2.0))
     # ---- buildings
     for k, (poly, t) in enumerate(buildings):
         try:
@@ -251,6 +304,23 @@ def build(osm, elev, lat0, lon0, radius=150.0, n_elev=13, materials=None):
             mid = ((p[0] + q[0]) / 2, (p[1] + q[1]) / 2)
             sc.quad((p[0], T.h(*p) - 40, p[1]), (q[0], T.h(*q) - 40, q[1]), (q[0], T.h(*q) + 700, q[1]),
                     (p[0], T.h(*p) + 700, p[1]), "brick", face=(-mid[0], 0, -mid[1]))
+    # ---- quarter pipes along the boundary (inside the walls), where no building is in the way
+    QP_R, QP_H, QP_DECK, QP_LEN = 140.0, 170.0, 150.0, 560.0
+    for a, b in zip(corners, corners[1:] + corners[:1]):
+        L = math.dist(a, b)
+        tx, tz = (b[0] - a[0]) / L, (b[1] - a[1]) / L
+        nx, nz = -tz, tx  # inwards (left of a->b)
+        k = int((L - 2 * QP_DECK) // (QP_LEN + 40))
+        for s_ in range(k):
+            d0 = QP_DECK + 20 + s_ * (QP_LEN + 40)
+            p0 = (a[0] + tx * d0 + nx * QP_DECK, a[1] + tz * d0 + nz * QP_DECK)
+            p1 = (p0[0] + tx * QP_LEN, p0[1] + tz * QP_LEN)
+            foot = [(p0[0] + tx * u + nx * v, p0[1] + tz * u + nz * v)
+                    for u in (0, QP_LEN / 2, QP_LEN) for v in (-QP_DECK, 0, QP_R)]
+            if any(hit(q, bb_build) for q in foot):
+                continue
+            y = min(T.h(*q) for q in foot) - 4
+            sc.quarter_pipe(p0, p1, y, QP_R, QP_H, QP_DECK, "stone", deck_mat="paving")
     sc.start((0.0, T.h(0, 0) + 10, 0.0), 0.0)
     return sc
 
@@ -304,3 +374,42 @@ def low_wall(sc, T, a, b, h=32.0, t=8.0):
 
 def load(path_osm, path_elev):
     return json.load(open(path_osm)), json.load(open(path_elev))
+
+
+def kerbs(sc, T, edge, centre, side, blocked):
+    """Raised kerb strip just outside a road edge, cut where it would cross another road; grindable (one rail per
+    continuous run, along the road-side top edge)."""
+    from thaw_sandbox.mapgen.scene import Rail
+    run = []
+
+    def flush():
+        if len(run) >= 2:
+            sc.rails.append(Rail([(x, T.h(x, z) + KERB_H, z) for x, z in run], "TERRAIN_GRINDCONC"))
+        run.clear()
+    for i in range(len(edge) - 1):
+        a, b = edge[i], edge[i + 1]
+        L = math.dist(a, b)
+        if L < 1:
+            continue
+        ox, oz = (a[0] - centre[i][0]), (a[1] - centre[i][1])
+        m = math.hypot(ox, oz) or 1.0
+        ox, oz = ox / m * KERB_W, oz / m * KERB_W
+        ox2, oz2 = (b[0] - centre[i + 1][0]), (b[1] - centre[i + 1][1])
+        m2 = math.hypot(ox2, oz2) or 1.0
+        ox2, oz2 = ox2 / m2 * KERB_W, oz2 / m2 * KERB_W
+        mid = ((a[0] + b[0]) / 2 + (ox + ox2) / 4, (a[1] + b[1]) / 2 + (oz + oz2) / 4)
+        if blocked(mid):
+            flush()
+            continue
+        A, B = (a[0] + ox, a[1] + oz), (b[0] + ox2, b[1] + oz2)
+        h = lambda p, d=0.0: T.h(*p) + d
+        sc.quad((a[0], h(a, KERB_H), a[1]), (b[0], h(b, KERB_H), b[1]), (B[0], h(B, KERB_H), B[1]),
+                (A[0], h(A, KERB_H), A[1]), "stone", face=(0, 1, 0))
+        sc.quad((a[0], h(a, -2), a[1]), (b[0], h(b, -2), b[1]), (b[0], h(b, KERB_H), b[1]), (a[0], h(a, KERB_H), a[1]),
+                "stone", face=(-ox, 0, -oz))
+        sc.quad((A[0], h(A, -2), A[1]), (B[0], h(B, -2), B[1]), (B[0], h(B, KERB_H), B[1]), (A[0], h(A, KERB_H), A[1]),
+                "stone", face=(ox, 0, oz))
+        if not run:
+            run.append(a)
+        run.append(b)
+    flush()

@@ -270,8 +270,36 @@ class App:
                   foreground=GREY, wraplength=700).grid(row=2 + 2 * len(sources.ADAPTERS), column=0, columnspan=5,
                                                         sticky="w", pady=(6, 0))
 
+        g = ttk.LabelFrame(f, text="Levels from real places (generated, needs internet)", padding=10)
+        g.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+        g.columnconfigure(1, weight=1)
+        ttk.Label(g, text="Location").grid(row=0, column=0, sticky="w", padx=(0, 8))
+        self.place = tk.StringVar()
+        pe = ttk.Entry(g, textvariable=self.place)
+        pe.grid(row=0, column=1, sticky="ew")
+        pe.bind("<Return>", lambda _e: self.add_place())
+        ttk.Label(g, text="Size").grid(row=0, column=2, padx=(8, 4))
+        self.place_size = tk.StringVar(value="300 m")
+        ttk.Combobox(g, textvariable=self.place_size, values=("200 m", "300 m", "400 m"), width=7,
+                     state="readonly").grid(row=0, column=3)
+        ttk.Label(g, text="Name").grid(row=0, column=4, padx=(8, 4))
+        self.place_name = tk.StringVar()
+        ttk.Entry(g, textvariable=self.place_name, width=14).grid(row=0, column=5)
+        self.add_btn = ttk.Button(g, text="Add place", command=self.add_place)
+        self.add_btn.grid(row=0, column=6, padx=(8, 0))
+        self.places = [tuple(x) for x in st.get("places", [])]  # [(location, size m, name)]
+        self.place_list = tk.Listbox(g, height=3)
+        self.place_list.grid(row=1, column=0, columnspan=6, sticky="ew", pady=(6, 0))
+        ttk.Button(g, text="Remove", command=self.remove_place).grid(row=1, column=6, sticky="n", padx=(8, 0),
+                                                                      pady=(6, 0))
+        self.place_note = ttk.Label(g, foreground=GREY, wraplength=700, text=(
+            "A plus code (9C6WQCGF+QP, or QCGF+QP Durham) or 'lat, lon'. Streets, buildings, steps, benches and hills "
+            "come from OpenStreetMap and elevation data; textures from your American Wasteland disc."))
+        self.place_note.grid(row=2, column=0, columnspan=7, sticky="w", pady=(4, 0))
+        self.refresh_places()
+
         o = ttk.LabelFrame(f, text="Options", padding=10)
-        o.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+        o.grid(row=4, column=0, sticky="ew", pady=(10, 0))
         o.columnconfigure(1, weight=1)
         self.shrink = tk.BooleanVar(value=st.get("shrink", False))
         ttk.Checkbutton(o, text="Shrink the image (free skate only)", variable=self.shrink,
@@ -293,18 +321,18 @@ class App:
         self.options_changed()
 
         b = ttk.Frame(f)
-        b.grid(row=4, column=0, sticky="ew", pady=(12, 4))
+        b.grid(row=5, column=0, sticky="ew", pady=(12, 4))
         b.columnconfigure(1, weight=1)
         self.go = ttk.Button(b, text="Build", command=self.start)
         self.go.grid(row=0, column=0)
         self.bar = ttk.Progressbar(b, mode="determinate")
         self.bar.grid(row=0, column=1, sticky="ew", padx=10)
         self.state = tk.StringVar(value="Pick your discs, then Build.")
-        ttk.Label(f, textvariable=self.state).grid(row=5, column=0, sticky="w")
+        ttk.Label(f, textvariable=self.state).grid(row=6, column=0, sticky="w")
 
         lf = ttk.Frame(f)
-        lf.grid(row=6, column=0, sticky="nsew", pady=(6, 0))
-        f.rowconfigure(6, weight=1)
+        lf.grid(row=7, column=0, sticky="nsew", pady=(6, 0))
+        f.rowconfigure(7, weight=1)
         lf.columnconfigure(0, weight=1)
         lf.rowconfigure(0, weight=1)
         self.log = tk.Text(lf, height=8, wrap="word", state="disabled", font=("TkFixedFont", 9))
@@ -317,6 +345,47 @@ class App:
             r.changed()
         root.protocol("WM_DELETE_WINDOW", self.close)
         root.after(100, self.poll)
+
+    # ---- real places
+    def refresh_places(self):
+        self.place_list.delete(0, "end")
+        for loc, size, name in self.places:
+            self.place_list.insert("end", f"{name}  -  {loc}  ({size} m square)")
+
+    def add_place(self):
+        loc = self.place.get().strip()
+        if not loc or self.busy:
+            return
+        size = int(self.place_size.get().split()[0])
+        name = self.place_name.get().strip()
+        self.add_btn.configure(state="disabled")
+        self.place_note.configure(text="Checking the location…", foreground=GREY)
+
+        def work():
+            from thaw_sandbox.mapgen import fetch, real_place
+            try:
+                lat, lon = fetch.resolve(loc)
+                self.q.put(("place", (loc, size, name or real_place(loc)[1], lat, lon, None)))
+            except Exception as e:
+                self.q.put(("place", (loc, size, name, None, None, e)))
+        threading.Thread(target=work, daemon=True).start()
+
+    def on_place(self, x):
+        loc, size, name, lat, lon, err = x
+        self.add_btn.configure(state="normal")
+        if err:
+            self.place_note.configure(text=f"✖ {err}", foreground=BAD)
+            return
+        self.places.append((loc, size, name[:20]))
+        self.refresh_places()
+        self.place.set("")
+        self.place_name.set("")
+        self.place_note.configure(text=f"✔ Added {name} ({lat:.5f}, {lon:.5f}).", foreground=GOOD)
+
+    def remove_place(self):
+        for i in reversed(self.place_list.curselection()):
+            del self.places[i]
+        self.refresh_places()
 
     def options_changed(self):
         if self.shrink.get():
@@ -360,7 +429,7 @@ class App:
                 "levels": {r.game.GAME: (sorted(r.selected) if r.selected is not None else None)
                            for r in self.rows[1:]},
                 "shrink": self.shrink.get(), "unlock": self.unlock.get(), "package": self.package.get(),
-                "out": self.out.get()}
+                "out": self.out.get(), "places": [list(p) for p in self.places]}
 
     # ---- build ----
     def problems(self):
@@ -373,8 +442,8 @@ class App:
         bad = [r for r in self.rows if r.path.get().strip() and r.ok is False]
         if bad:
             return f"{bad[0].msg}:\n{bad[0].path.get()}"
-        if not any(r.chosen() for r in self.rows[1:]):
-            return "Choose at least one game (and level) to take levels from."
+        if not any(r.chosen() for r in self.rows[1:]) and not self.places:
+            return "Choose at least one game (and level) to take levels from, or add a real place."
         if not out:
             return "Choose where to save the new image."
         discs = {os.path.abspath(r.path.get().strip()) for r in self.rows if r.path.get().strip()}
@@ -406,8 +475,12 @@ class App:
         self.log.configure(state="disabled")
         self.state.set("Building…")
         shrink = self.shrink.get()
+        from thaw_sandbox.mapgen import real_place
+        gen = [real_place(loc, size / 2, name, cli.WORK) for loc, size, name in self.places]
+        self.total += len(gen)
+        self.bar.configure(maximum=self.total + 2)
         args = (self.thaw.get().strip(), wanted, out, cli.WORK, shrink, pkg, False, True,
-                self.unlock.get() or shrink)
+                self.unlock.get() or shrink, gen)
         threading.Thread(target=self.worker, args=args, daemon=True).start()
 
     def worker(self, *args):
@@ -454,8 +527,8 @@ class App:
             self.bar.configure(value=1 + self.done_levels)
         elif s.startswith("shrinking"):
             self.state.set("Shrinking the image…")
-        elif s.startswith("extracting"):
-            self.state.set(s)
+        elif s.startswith("extracting") or s.startswith("downloading"):
+            self.state.set(s[:1].upper() + s[1:])
 
     def finish(self):
         self.busy = False

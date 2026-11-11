@@ -12,6 +12,12 @@ games you want levels from and leave the rest empty. Each disc is checked when c
 named; a .chd is extracted once). Levels... ticks single levels (all by default); a level that a newer chosen game
 remade is marked and added once, from the newest game.
 
+Levels from real places (needs internet): type a plus code (9C6WQCGF+QP, or QCGF+QP Durham) or "lat, lon",
+pick a size (200-400 m square) and Add place. At build time the tool downloads OpenStreetMap features and elevation
+for that square and generates a level: hills, roads with grindable kerbs, cobbled footways, buildings from their
+footprints, steps with handrails, benches and walls as ledges, quarter pipes along the edges; textures come from
+your American Wasteland disc. Map data (c) OpenStreetMap contributors (ODbL); elevation EU-DEM / SRTM via OpenTopoData.
+
 Options:
   Shrink the image   off (default): the full game - boots as normal with story mode, classic mode, movies and
                      everything else; the new levels are in High Score / Free Skate. The image grows by the levels
@@ -30,6 +36,7 @@ Command line:
          --out "THAW Super DX.iso" [--shrink] [--package DIR]
 
   --add DISC[:codes]  all levels of DISC, or only the listed codes
+  --generate "LOCATION[;RADIUS[;NAME]]"  generate a level from a real place (plus code or "lat, lon"; radius m)
   --keep-duplicates   a level that a newer game remade (e.g. THPS3's Airport, in THUG2) is normally imported once,
                       from the newest engine; this keeps every version
   --shrink            free skate only (boots to the level list; story, movies, cutscenes, extras removed; music

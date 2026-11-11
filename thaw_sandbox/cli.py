@@ -15,12 +15,12 @@ WORK = os.path.expanduser("~/.cache/thaw-super-dx")
 
 
 def run_build(thaw, wanted, out, work=WORK, shrink=False, package_dir=None, keep_duplicates=False,
-              level_scripts=True, unlock_all=True):
+              level_scripts=True, unlock_all=True, generated=()):
     """The whole job (shared by the command line and the GUI) -> [(display name, zone)] added.
     shrink: free skate only (boots to the level list; story, movies, cutscenes and extras removed; music kept).
     Without it THAW is complete and boots normally; the added levels are in free skate."""
     added = B.build(thaw, wanted, out, work, level_scripts=level_scripts, keep_duplicates=keep_duplicates,
-                    sandbox=shrink, unlock_all=unlock_all)
+                    sandbox=shrink, unlock_all=unlock_all, generated=generated)
     if shrink:
         from thaw_sandbox import iso_compact
         B.log("shrinking the image ...")
@@ -54,6 +54,9 @@ def main(argv=None):
                    help="keep levels locked until visited in story mode (default: all unlocked; ignored with --shrink)")
     b.add_argument("--package", metavar="DIR",
                    help="also make an emulator-ready folder (image, Linux PCSX2 launcher, Android notes)")
+    b.add_argument("--generate", action="append", default=[], metavar="LOCATION[;RADIUS[;NAME]]",
+                   help="generate a level from a real place (OpenStreetMap + elevation, downloaded): a plus code "
+                        "(9C6WQCGF+QP, or QCGF+QP Durham) or 'lat, lon'; radius in metres (default 150)")
     b.add_argument("--keep-duplicates", action="store_true",
                    help="import a level from every chosen game even when a newer game remade it (default: newest only)")
     b.add_argument("--no-level-scripts", action="store_true", help="leave the levels' own scripts out")
@@ -71,8 +74,15 @@ def main(argv=None):
     for spec in a.add:
         path, _, codes = spec.rpartition(":") if os.path.exists(spec.rpartition(":")[0] or "\0") else (spec, "", "")
         wanted.append((path, [c for c in codes.split(",") if c] or None))
+    gen = []
+    if a.generate:
+        from thaw_sandbox.mapgen import real_place
+        for spec in a.generate:
+            parts = spec.split(";")
+            gen.append(real_place(parts[0], float(parts[1]) if len(parts) > 1 and parts[1] else 150.0,
+                                  parts[2] if len(parts) > 2 else None, a.work))
     run_build(a.thaw, wanted, a.out, a.work, a.shrink, a.package, a.keep_duplicates, not a.no_level_scripts,
-              not a.no_unlock)
+              not a.no_unlock, gen)
     return 0
 
 

@@ -4,7 +4,9 @@
 
 textures: material name -> a palettised source texture (thug2_tex.Texture or thaw_tex.NewTexture).
 """
-import struct
+import hashlib
+import inspect
+import re
 
 from thaw_sandbox import level_convert as LC, pak, thaw_tex as TT, zone
 from thaw_sandbox.mapgen import col_writer, geom_writer, nodes, texlib
@@ -30,6 +32,35 @@ def build_zone(template_zone, scene, textures, zone_name, template="z_ja"):
     return zb, st
 
 
+# THAW's own Beverly Hills textures (always available: the user's THAW disc), by position among its palettised
+# textures of at least 64 x 64 in dictionary order
+THAW_PICKS = {"paving": 3, "path": 1, "grass": 149, "asphalt": 92, "brick": 112, "stone": 23, "roof": 33, "wood": 5,
+              "metal": 24}
+
+
+def thaw_textures(disc, picks=THAW_PICKS, zone_name="z_bh"):
+    zb = disc.read(f"\\worlds\\worldzones\\{zone_name}\\{zone_name}.pak.ps2")
+    big = LC._biggest(zb, zone.entries(zb))
+    p = pak.data_pos(big[".tex"], 0)
+    tex = zb[p:p + big[".tex"].size]
+    offs, ts = TT.parse(tex)
+    sel = [t for t in ts if t.width >= 64 and t.height >= 64 and t.psm in (0x13, 0x14)]
+    return {m: TT.extract_native(tex, offs, sel[i]) for m, i in picks.items()}
+
+
+def real_place(location, radius=150.0, name=None, work="."):
+    """A generated level spec (code, display name, make(disc)) for a real location."""
+    from thaw_sandbox.mapgen import fetch, osm
+
+    def make(disc):
+        lat, lon = fetch.resolve(location)
+        data, elev = fetch.fetch(lat, lon, radius, f"{work}/mapdata")
+        return osm.build(data, elev, lat, lon, radius), thaw_textures(disc)
+    place = re.sub(r"[23456789CFGHJMPQRVWX]{2,8}\+[23456789CFGHJMPQRVWX]{2,3}|-?\d+(\.\d+)?", "", location, flags=re.I)
+    disp = name or place.strip(" ,;") or "Real Place"
+    return ("gen" + hashlib.sha1(location.encode()).hexdigest()[:2], disp[:20], make)
+
+
 class GeneratedSource:
     """A 'source game' whose levels are generated (used by build.build like a disc adapter)."""
     GAME = "Generated"
@@ -44,11 +75,7 @@ class GeneratedSource:
 
     all_levels = levels
 
-    def build_zone(self, code, template_zone, zone_name, template):
+    def build_zone(self, code, template_zone, zone_name, template, disc=None):
         make = next(m for c, _, m in self._levels if c == code)
-        scene, textures = make()
+        scene, textures = make(disc) if inspect.signature(make).parameters else make()
         return build_zone(template_zone, scene, textures, zone_name, template)
-
-
-def _struct_unused():
-    return struct

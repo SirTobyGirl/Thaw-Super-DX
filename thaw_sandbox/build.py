@@ -94,7 +94,8 @@ def zone_names(codes, taken, hints=None):
 ROOM_PER_LEVEL = 14 * 2**20  # zone (<= 10.4 MB) + ped + sfx packs + a re-appended qb.pab
 
 
-def build(thaw, wanted, out, work_dir, level_scripts=True, keep_duplicates=False, sandbox=False, unlock_all=True):
+def build(thaw, wanted, out, work_dir, level_scripts=True, keep_duplicates=False, sandbox=False, unlock_all=True,
+          generated=()):
     """wanted: [(source disc path, [codes] or None)]. Returns [(display name, zone)] added.
     sandbox: boot straight to the free-skate level list (for shrunk images: the movies' room is used);
     otherwise THAW boots and plays as normal (every file kept, the image grows) and the levels are in free skate.
@@ -112,6 +113,10 @@ def build(thaw, wanted, out, work_dir, level_scripts=True, keep_duplicates=False
         if bad:
             raise ValueError(f"{path}: unknown level(s) {bad}; available: {', '.join(avail)}")
         srcs.append((s, [(c, avail[c]) for c in codes]))
+    if generated:  # levels made by thaw_sandbox.mapgen: [(code, display name, make)]
+        from thaw_sandbox.mapgen import GeneratedSource
+        g = GeneratedSource(list(generated))
+        srcs.append((g, g.levels()))
     if not keep_duplicates:  # a level in several games is imported once, from the newest engine
         srcs, skipped = sources.dedupe(srcs)
         for s, code, name, newer in skipped:
@@ -151,7 +156,7 @@ def build(thaw, wanted, out, work_dir, level_scripts=True, keep_duplicates=False
             log(f"{s.GAME} {display}: converting ...")
             if getattr(s, "PREBUILT", False):  # generated level (thaw_sandbox.mapgen)
                 files = {}
-                zb, st = s.build_zone(code, template, zn, TEMPLATE)
+                zb, st = s.build_zone(code, template, zn, TEMPLATE, d)
             else:
                 files = s.level_files(code)
                 zb, st = level_convert.convert_level(template, files, code, zn, s.resolve_texture_refs,

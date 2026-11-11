@@ -26,6 +26,9 @@ Options:
                      and extras are removed, music stays. About 1.9 GB.
   Unlock all levels  on (default): every level is open in free skate from the start. Off: THAW's levels open as
                      story mode visits them; the added levels are always open. Always on when shrinking.
+  Soundtracks       on (default): the chosen games' songs join THAW's playlist (THUG2 53, THUG 77, THPS4 45
+                     songs; songs THAW already has are skipped). Up to ~2 GB more; without Shrink only what
+                     still fits on a single-layer DVD.
   Emulator-ready folder: the image next to a PCSX2 launcher and notes.
 
 Command line:
@@ -41,6 +44,7 @@ Command line:
                       from the newest engine; this keeps every version
   --shrink            free skate only (boots to the level list; story, movies, cutscenes, extras removed; music
                       kept; about 1.9 GB). Without it the full game boots as normal, levels in free skate
+  --music             add the chosen games' soundtracks to THAW's playlist
   --no-unlock         THAW's levels open as story mode visits them (default: all unlocked; ignored with --shrink)
   --package DIR       emulator-ready folder: the image, play-linux.sh (PCSX2) and Android notes
 Your discs are never modified.

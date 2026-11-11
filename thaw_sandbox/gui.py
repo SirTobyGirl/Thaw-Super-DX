@@ -317,6 +317,11 @@ class App:
         self.package = tk.BooleanVar(value=st.get("package", False))
         ttk.Checkbutton(o, text="Also make an emulator-ready folder (image + PCSX2 launcher + notes)",
                         variable=self.package).grid(row=4, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        self.music = tk.BooleanVar(value=st.get("music", True))
+        ttk.Checkbutton(o, text="Add the soundtracks of the chosen games to the playlist", variable=self.music).grid(
+            row=6, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        ttk.Label(o, text="Up to ~2 GB more with all three games. Without Shrink, only what still fits on a DVD.",
+                  foreground=GREY, wraplength=680).grid(row=7, column=0, columnspan=3, sticky="w", padx=(24, 0))
         ttk.Label(o, text="Save as", width=10).grid(row=5, column=0, sticky="w", pady=(10, 0))
         self.out = tk.StringVar(value=st.get("out", os.path.expanduser("~/THAW Super DX.iso")))
         ttk.Entry(o, textvariable=self.out).grid(row=5, column=1, sticky="ew", pady=(10, 0))
@@ -522,6 +527,7 @@ class App:
                 "levels": {r.game.GAME: (sorted(r.selected) if r.selected is not None else None)
                            for r in self.rows[1:]},
                 "shrink": self.shrink.get(), "unlock": self.unlock.get(), "package": self.package.get(),
+                "music": self.music.get(),
                 "out": self.out.get(), "places": [list(p) for p in self.places]}
 
     # ---- build ----
@@ -574,7 +580,7 @@ class App:
         self.total += len(gen)
         self.bar.configure(maximum=self.total + 2)
         args = (self.thaw.get().strip(), wanted, out, cli.WORK, shrink, pkg, False, True,
-                self.unlock.get() or shrink, gen)
+                self.unlock.get() or shrink, gen, self.music.get())
         threading.Thread(target=self.worker, args=args, daemon=True).start()
 
     def worker(self, *args):
@@ -619,6 +625,8 @@ class App:
             self.done_levels += 1
             self.state.set(f"Level {self.done_levels} of {self.total}: {s[:-len(': converting ...')]}")
             self.bar.configure(value=1 + self.done_levels)
+        elif s.startswith("music:"):
+            self.state.set("Adding music…")
         elif s.startswith("shrinking"):
             self.state.set("Shrinking the image…")
         elif s.startswith("extracting") or s.startswith("downloading"):

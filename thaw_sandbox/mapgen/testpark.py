@@ -7,7 +7,7 @@ from thaw_sandbox.mapgen.scene import Material, Scene
 PICKS = {"ground": 37, "asphalt": 10, "brick": 12, "ramp": 8, "wood": 71, "metal": 6}
 
 
-def boston_textures(thug2_disc, work):
+def boston_textures(thug2_disc, work, picks=None):
     s = sources.open_source(B.disc_image(thug2_disc, work), f"{work}/cache")
     f = s.level_files("bo")
     _, t2 = T2.parse(f["tex"])
@@ -17,7 +17,7 @@ def boston_textures(thug2_disc, work):
         src = x if x.mips else refs.get(x.crc)
         if src is not None and src.width >= 64 and src.height >= 64:
             ts.append(src)
-    return {m: ts[i] for m, i in PICKS.items()}
+    return {m: ts[i] for m, i in (picks or PICKS).items()}
 
 
 def scene():

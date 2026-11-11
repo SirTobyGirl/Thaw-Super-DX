@@ -24,14 +24,14 @@ You need your THAW disc (NTSC-U, `.iso` or `.chd`) plus the discs you want level
 THUG2 (SLUS-20965), THUG (SLUS-20731), THPS4 (SLUS-20504), THPS3 (SLUS-20013).
 `.chd` files need MAME's `chdman` installed; `.iso` files work as they are.
 
-**Linux**: download `thaw-super-dx` from [Releases](../../releases), make it executable and run it:
+**Linux**: download `thaw-super-dx-linux-x86_64` from [Releases](../../releases), make it executable and run it:
 
 ```
-chmod +x thaw-super-dx && ./thaw-super-dx
+chmod +x thaw-super-dx-linux-x86_64 && ./thaw-super-dx-linux-x86_64
 ```
 
 Pick your discs, tick the levels and options, press Build. A command line is also available
-(`./thaw-super-dx build --help`). Windows is not available yet.
+(`./thaw-super-dx-linux-x86_64 build --help`). Windows is not available yet.
 
 **From source** (Python 3.12, `pip install pycdlib`): `./thaw-super-dx.sh` or `python -m thaw_sandbox`.
 

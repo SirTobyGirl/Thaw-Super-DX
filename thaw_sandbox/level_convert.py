@@ -11,7 +11,7 @@ The result still carries the template's internal names; zone_rename.rename_zone 
 import struct
 
 from thaw_sandbox import col as CL, convert_thug2 as C, geom as GM, pak, qb_data as QD, qb_file as F
-from thaw_sandbox import gaps, qb_parser as Q, rails, thaw_tex as TT, thug2_tex as T2, zone
+from thaw_sandbox import gaps, prefix_table, qb_parser as Q, rails, thaw_tex as TT, thug2_qb, thug2_tex as T2, zone
 
 # THUG2 node classes whose models do not exist in THAW: keep the nodes (link indices) but stop them spawning
 NEUTRALISE = ("LevelObject", "LevelLight", "Pedestrian", "Vehicle", "ParticleObject", "GameObject",
@@ -94,7 +94,8 @@ def convert_nodes(qb_bytes, code, na_zone, orig_crc, flip_z=False, neutralise=()
               F.Item(12, Q.qbcrc(f"{na_zone}_NodeArray_SortedIndices"), QD.Array(1, [i for _, i in pairs]))]
     out = F.write(orig_crc, items)
     if with_rails:
-        return out, rails.build(na.items, {it.name: it.value for it in items if isinstance(it.value, QD.Struct)})
+        return out, rails.build(na.items, {it.name: it.value for it in items if isinstance(it.value, QD.Struct)}), \
+            na.items
     return out
 
 
@@ -159,7 +160,7 @@ def convert_level(template_zone, files, code, zone_name, resolve_refs, template=
     big = _biggest(zb, tab)
     p0 = pak.data_pos(big[".nqb"], 0)
     orig_crc, _ = F.read(zb[p0:p0 + big[".nqb"].size])
-    nqb, rnb = convert_nodes(files["qb"], code, zone_name, orig_crc, flip_z=files.get("flip_z", False),
+    nqb, rnb, node_items = convert_nodes(files["qb"], code, zone_name, orig_crc, flip_z=files.get("flip_z", False),
                              neutralise=files.get("neutralise", ()), trigger_classes=files.get("trigger_classes"),
                              with_rails=True)
     tex, geom, st = convert_textures_and_geometry(files["tex"], files["geom"], resolve_refs)
@@ -193,6 +194,21 @@ def convert_level(template_zone, files, code, zone_name, resolve_refs, template=
     for e in tab:
         if struct.unpack_from("<I", zb, e.pos)[0] == gaps.GAP_TYPE and e.size < 0x40000000:
             rep[e.pos] = gaps.build(gap_list, zone_name)
+    # node name-prefix table: the template's lists Kyoto's prefixes and node indices
+    names = {}
+    for key in ("qb", "scripts"):
+        if files.get(key):
+            try:
+                names.update(thug2_qb.parse(files[key]).names)
+            except Exception:
+                pass
+    prefixes = prefix_table.script_prefixes(sitems, names)
+    for e in tab:
+        if struct.unpack_from("<I", zb, e.pos)[0] == prefix_table.TYPE and e.size < 0x40000000:
+            p_ = pak.data_pos(e, 0)
+            if struct.unpack_from("<I", zb, p_)[0] == Q.qbcrc(f"{template}_NodeArray"):
+                rep[e.pos] = prefix_table.build(node_items, names, prefixes, zone_name)
+    st["prefixes"] = len(prefixes)
     pe = named[f"{template}_peds.qb.ps2"]  # template peds would walk the template's paths: none
     pp = pak.data_pos(pe, 0)
     pcrc, pitems = F.read(zb[pp:pp + pe.size])
@@ -246,6 +262,9 @@ def assemble_level(template_zone, tex, geom, col, node_items, zone_name, templat
             continue
         if typ == rails.RNB_TYPE:
             rep[e.pos] = rnb
+        elif typ == prefix_table.TYPE and struct.unpack_from("<I", zb, pak.data_pos(e, 0))[0] == \
+                Q.qbcrc(f"{template}_NodeArray"):  # Kyoto's prefixes / node indices: none here
+            rep[e.pos] = prefix_table.build(node_items, {}, (), zone_name)
         elif typ == gaps.GAP_TYPE:
             rep[e.pos] = gaps.build([], zone_name)
     pe = named[f"{template}_peds.qb.ps2"]

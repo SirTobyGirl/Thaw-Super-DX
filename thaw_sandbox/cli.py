@@ -15,12 +15,28 @@ WORK = os.path.expanduser("~/.cache/thaw-super-dx")
 
 
 def run_build(thaw, wanted, out, work=WORK, shrink=False, package_dir=None, keep_duplicates=False,
-              level_scripts=True, unlock_all=True, generated=()):
+              level_scripts=True, unlock_all=True, generated=(), music=False):
     """The whole job (shared by the command line and the GUI) -> [(display name, zone)] added.
     shrink: free skate only (boots to the level list; story, movies, cutscenes and extras removed; music kept).
     Without it THAW is complete and boots normally; the added levels are in free skate."""
     added = B.build(thaw, wanted, out, work, level_scripts=level_scripts, keep_duplicates=keep_duplicates,
                     sandbox=shrink, unlock_all=unlock_all, generated=generated)
+    if music:  # mega merge: the chosen games' soundtracks join THAW's playlist
+        from thaw_sandbox import iso_build, music as M
+        discs = []
+        for path, _ in wanted:
+            p = B.disc_image(path, work)
+            discs.append((p, sources.open_source(p, os.path.join(work, "cache"))))
+        if shrink:
+            M.merge(out, discs, log=B.log)
+        else:  # the full game keeps its old music WAD too: only what still fits a single-layer DVD
+            from thaw_sandbox import iso_manager as I
+            _, wlen = I.file_extent(out, "/MUSIC/MUSICP.WAD;1")
+            room = iso_build.DVD5_SECTORS * 2048 - os.path.getsize(out) - wlen - 8 * 2**20
+            if room > 64 * 2**20:
+                M.merge(out, discs, log=B.log, max_bytes=room)
+            else:
+                B.log("music: no room left on a DVD for more songs without shrinking; skipped")
     if shrink:
         from thaw_sandbox import iso_compact
         B.log("shrinking the image ...")
@@ -50,6 +66,8 @@ def main(argv=None):
     b.add_argument("--shrink", action="store_true",
                    help="free skate only: boots to the level list; story, movies, cutscenes and extras removed, music "
                         "kept (about 1.9 GB). Without it THAW boots normally and the levels are in free skate")
+    b.add_argument("--music", action="store_true",
+                   help="also add the chosen games' soundtracks to THAW's playlist (with --shrink: about +1.7 GB)")
     b.add_argument("--no-unlock", action="store_true",
                    help="keep levels locked until visited in story mode (default: all unlocked; ignored with --shrink)")
     b.add_argument("--package", metavar="DIR",
@@ -83,7 +101,7 @@ def main(argv=None):
                                   parts[2] if len(parts) > 2 and parts[2] else None, a.work,
                                   parts[3] if len(parts) > 3 and parts[3] else None))
     run_build(a.thaw, wanted, a.out, a.work, a.shrink, a.package, a.keep_duplicates, not a.no_level_scripts,
-              not a.no_unlock, gen)
+              not a.no_unlock, gen, a.music)
     return 0
 
 

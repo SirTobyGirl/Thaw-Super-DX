@@ -17,6 +17,8 @@ LEVELS = ("nj", "ny", "fl", "sd", "hi", "vc", "sj", "ru", "se", "sc", "dj", "ph"
 # School, Downhill Jam and Philly are the same levels THUG2 ships (58-77% of their textures shared); THUG2's newer
 # versions win. (THUG's se, Hotter Than Hell, shares no textures with THUG2's se: a different level.)
 ORIGIN = {"sc": "classic:school", "dj": "classic:downhill_jam", "ph": "classic:philadelphia"}
+# display names that read better than the game's own level-table names (user request 2026-11-11)
+RENAME = {"fl": "Tampa", "vn": "Venice"}
 ZONE_HINTS = {"se": "z_hh", "sc2": "z_s2", "ny": "z_mh", "sj": "z_sj", "vn": "z_vn", "hn": "z_hn"}
 
 
@@ -54,7 +56,7 @@ class Source:
                 lv, nm = d.get(Q.qbcrc("level")), d.get(Q.qbcrc("name"))
                 if isinstance(lv, str) and isinstance(nm, str):
                     names[lv.lower()] = nm
-        return [(c, names.get(c, c.upper())) for c in codes]
+        return [(c, RENAME.get(c) or names.get(c, c.upper())) for c in codes]
 
     def level_files(self, code):
         tex = read_pre(self.read(f"\\pre\\{code}scn.pre"))[f"levels\\{code}\\{code}.tex.ps2"]

@@ -79,6 +79,23 @@ def _resort_name_indexes(items) -> int:
     return n
 
 
+PREFIX_TABLE = 0xA7DEA591
+
+
+def _rename_prefix_table(b: bytes, rn) -> bytes:
+    """Rename a node prefix table's header (its node array) and keys (prefixes), keeping it sorted by key."""
+    head, n = struct.unpack_from("<2I", b, 0)
+    recs = [struct.unpack_from("<3I", b, 8 + 12 * i) for i in range(n)]
+    base = 8 + 12 * n
+    lists = [(rn(k), b[base + o:base + o + 2 * c]) for k, o, c in recs]
+    lists.sort(key=lambda r: r[0])
+    body, area = bytearray(), bytearray()
+    for k, idx in lists:
+        body += struct.pack("<3I", k, len(area), len(idx) // 2)
+        area += idx
+    return struct.pack("<2I", rn(head), n) + bytes(body) + bytes(area)
+
+
 def rename_zone(zb: bytes, old: str, new: str, nt: NameTable) -> tuple[bytes, dict]:
     assert len(old) == len(new)
     # paths of this zone's entries (for the entry header hashes)
@@ -91,7 +108,8 @@ def rename_zone(zb: bytes, old: str, new: str, nt: NameTable) -> tuple[bytes, di
         if struct.unpack_from("<I", zb, e.pos + 28)[0] & 0x20:
             n = zb[e.pos + 32:e.pos + 192].split(b"\0")[0].decode("latin1")
             paths += [n, n.rsplit(".", 1)[0], n.rsplit(".", 2)[0]]
-    nt.add_names(paths + [p.replace(old, new) for p in paths])
+    arrays = [f"{old}{s}_NodeArray" for s in ("", "_sfx")]
+    nt.add_names(paths + [p.replace(old, new) for p in paths] + arrays + [a.replace(old, new) for a in arrays])
     rn = _mapper(nt, old, new)
     out = bytearray(zb)
     st = {"entries": 0, "names": 0, "qb records": 0}
@@ -114,6 +132,11 @@ def rename_zone(zb: bytes, old: str, new: str, nt: NameTable) -> tuple[bytes, di
                     i = lo.find(old.encode(), i + 1)
                 out[e.pos + 32:e.pos + 192] = fixed
                 st["names"] += 1
+        if w[0] == PREFIX_TABLE and e.size < 0x40000000:  # node prefix index: header + keys are names
+            from thaw_sandbox import pak
+            p = pak.data_pos(e, 0)
+            rep[e.pos] = _rename_prefix_table(zb[p:p + e.size], rn)
+            continue
         if w[0] in QB_TYPES and e.size < 0x40000000:
             from thaw_sandbox import pak
             p = pak.data_pos(e, 0)

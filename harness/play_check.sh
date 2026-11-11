@@ -4,7 +4,8 @@
 # every round; prints "DOWNS: OK|FROZEN at round k|CRASH (markers)" and the crash markers from the emulator log.
 cd "$(dirname "$0")/.."
 ISO=$1; N=$2; S=$3; MODE=$4
-L=~/.var/app/net.pcsx2.PCSX2/config/PCSX2/logs/emulog.txt
+. harness/env.sh
+L=$PCSX2_LOG
 if [ "$MODE" = normal ]; then harness/run_level_normal.sh "$ISO" "$N" "$S" >/dev/null 2>&1
 else harness/run_level.sh "$ISO" "$N" "$S" >/dev/null 2>&1; fi
 prev=""; frozen=0; res=OK

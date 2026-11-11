@@ -1,12 +1,13 @@
 #!/bin/bash
 # usage: shot.sh name  -> takes a screenshot via the virtual pad Guide button in PCSX2 and writes <harness dir>/name.jpg (960x540)
 S="$(cd "$(dirname "$0")" && pwd)"
+. "$S/env.sh"
 $S/vk.sh Guide; sleep 5
-HARNESS_DIR="$S" /home/bazzite/Thaw-Super-DX/.venv/bin/python - "$1" <<'P'
+HARNESS_DIR="$S" "$SDX_PY" - "$1" <<'P'
 import glob,os,sys
 from PIL import Image
 S=os.environ["HARNESS_DIR"]
-f=sorted(glob.glob('/home/bazzite/Emulation/storage/pcsx2/snaps/*.png'))[-1]
+f=sorted(glob.glob(os.environ['PCSX2_SNAPS'] + '/*.png'))[-1]
 import time
 for _ in range(10):
     try:

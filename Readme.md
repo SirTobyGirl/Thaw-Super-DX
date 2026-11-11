@@ -60,6 +60,22 @@ Known issues:
 - Pro Skater 3: glowing / see-through surfaces draw solid, Warehouse, Burnside and Roswell miss some textures
 - Music import is untested by ear
 
+## For modders
+
+The code that does the work is reusable on its own:
+
+- **[docs/FORMATS.md](docs/FORMATS.md)**: what we decoded about THAW's PS2 files (archives, compressed scripts,
+  textures, geometry, collision, rails, gaps, node tables) and the level formats of THUG2, THUG, THPS4 and THPS3
+- **`thaw_sandbox/`**: Python readers and writers for those formats (e.g. `lzss`, `qb_file`, `qb_tokens`,
+  `qb_code` (a small script compiler), `thaw_tex`, `geom`, `col`, `rails`, `rw`), plus the converters
+- **[harness/](harness/README.md)**: automated PCSX2 testing (virtual pad, screenshots, freeze and crash
+  detection, bisect tools, save-state readers, a Ghidra script)
+
+Built with help from [neversoft-multitool](https://github.com/slfx77/neversoft-multitool),
+[io_thps_scene](https://github.com/denetii/io_thps_scene), [LegacyTHPS](https://github.com/DCxDemo/LegacyTHPS),
+[QScript](https://github.com/cuckydev/QScript), [NeverScript](https://github.com/byxor/NeverScript) and
+[WAD-Tool](https://github.com/DCxDemo/WAD-Tool) as references.
+
 ## Legal
 
 Not affiliated with Activision or Neversoft. Use only discs you own. OpenStreetMap data © OpenStreetMap contributors

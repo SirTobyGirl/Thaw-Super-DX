@@ -4,7 +4,8 @@
 # session (heap state carries over). Prints one line per level: OK / FROZEN / new crash markers.
 cd "$(dirname "$0")/.."
 ISO=$1; N=$2; COUNT=$3; S=$4
-L=~/.var/app/net.pcsx2.PCSX2/config/PCSX2/logs/emulog.txt
+. harness/env.sh
+L=$PCSX2_LOG
 harness/run_level.sh "$ISO" "$N" "$S" >/dev/null 2>&1
 seen=0
 for i in $(seq 0 $((COUNT - 1))); do

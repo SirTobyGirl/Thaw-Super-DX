@@ -2,7 +2,8 @@
 # usage: harness/run_level_normal.sh ISO DOWNS SHOTNAME - normal-boot image: intro, main menu, High Score / Free Skate,
 # default skater, Play Level, DOWNS entries down the list, accept, wait, screenshot. Leaves PCSX2 running.
 H="$(cd "$(dirname "$0")" && pwd)"; ISO="$1"; N="$2"; S="$3"
-L=~/.var/app/net.pcsx2.PCSX2/config/PCSX2/logs/emulog.txt
+. "$(dirname "$0")/env.sh"
+L=$PCSX2_LOG
 $H/boot_shots.sh "$ISO" "${S}_boot" 20
 timeout 10 $H/vk.sh Start; sleep 8
 timeout 30 $H/vk.sh Down sleep:1 Down sleep:1 Down sleep:1 Down sleep:1 A; sleep 6

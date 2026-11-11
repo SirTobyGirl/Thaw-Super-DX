@@ -11,3 +11,5 @@ harness/vk.fifo
 # packaged executables (packaging/build_linux.sh)
 /build/
 /dist/
+# per-machine harness settings
+harness/env.local.sh

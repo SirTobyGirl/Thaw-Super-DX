@@ -5,9 +5,11 @@ Each adapter: GAME (name), detect(iso) -> bool, Source(iso, cache_dir).levels() 
 """
 import os
 
-from thaw_sandbox.sources import desa, thps3, thps4, thug, thug2
+from thaw_sandbox.sources import desa, p8, pg, thps3, thps4, thug, thug2
 
-ADAPTERS = [thug2, thug, thps4, thps3, desa]
+ADAPTERS = [p8, thug2, thug, thps4, thps3, desa]
+# recognised but not offered yet: their levels load but are not usable (sources/pg.py explains)
+PARKED = [pg]
 
 
 def open_source(iso, cache_dir):
@@ -60,7 +62,8 @@ def dedupe(chosen):
 # (first match wins; the window's disc check extracts and verifies them afterwards)
 CHD_NAME_HINTS = (("american wasteland", "THAW"), ("thaw", "THAW"), ("underground 2", "THUG2"), ("thug2", "THUG2"),
                   ("underground", "THUG"), ("thug", "THUG"), ("pro skater 4", "THPS4"), ("thps4", "THPS4"),
-                  ("pro skater 3", "THPS3"), ("thps3", "THPS3"), ("extreme skate", "Disney Extreme Skate Adventure"))
+                  ("pro skater 3", "THPS3"), ("thps3", "THPS3"), ("extreme skate", "Disney Extreme Skate Adventure"),
+                  ("project 8", "Project 8"))
 DISC_EXTS = (".iso", ".chd")
 
 
@@ -83,8 +86,12 @@ def scan_folder(folder, depth=2):
         else:
             try:
                 key = "THAW" if B.is_thaw(p) else next((a.GAME for a in ADAPTERS if a.detect(p)), None)
+                parked = None if key else next((a.GAME for a in PARKED if a.detect(p)), None)
             except Exception:
-                key = None
+                key = parked = None
+            if parked:
+                notes.append(f"{parked}: {os.path.basename(p)} (recognised; its levels are not supported yet)")
+                continue
             how = "by its serial"
         if key is None:
             notes.append(f"not a supported game: {os.path.basename(p)}")

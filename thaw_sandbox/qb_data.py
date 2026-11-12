@@ -53,7 +53,7 @@ def _scalar(b, raw, v):
         return struct.unpack("<i", struct.pack("<I", v))[0]
     if raw == 2:
         return struct.unpack("<f", struct.pack("<I", v))[0]
-    if raw == 13:
+    if raw in (13, 26):  # 26: Proving Ground's name reference (e.g. a ped's profile): a THAW name
         return Name(v)
     if raw == 3:
         return _string(b, v)
@@ -90,11 +90,11 @@ def decode_array(b: bytes, o: int) -> Array:
     assert tw & 0xFF00FFFF == 0x100, f"array header {tw:#x} at {o:#x}"
     et = (tw >> 16) & 0xFF
     n = u32(b, o + 4)
-    a = Array(et)
+    a = Array(13 if et == 26 else et)
     if n == 0:
         return a
     p = u32(b, o + 8)
-    if et in (1, 2, 13):  # values inline (count 1: the value itself sits in the ptr slot)
+    if et in (1, 2, 13, 26):  # values inline (count 1: the value itself sits in the ptr slot)
         vals = [p] if n == 1 else [u32(b, p + 4 * i) for i in range(n)]
         a.items = [_scalar(b, et, v) for v in vals]
     else:  # pointers to elements

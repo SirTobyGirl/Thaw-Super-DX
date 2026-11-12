@@ -3,9 +3,11 @@
 Each adapter: GAME (name), detect(iso) -> bool, Source(iso, cache_dir).levels() -> [(code, display name)],
 .level_files(code) -> {"geom", "col", "tex", "qb", "scripts"} bytes, .resolve_texture_refs(textures).
 """
-from thaw_sandbox.sources import thps3, thps4, thug, thug2
+import os
 
-ADAPTERS = [thug2, thug, thps4, thps3]
+from thaw_sandbox.sources import desa, thps3, thps4, thug, thug2
+
+ADAPTERS = [thug2, thug, thps4, thps3, desa]
 
 
 def open_source(iso, cache_dir):
@@ -13,6 +15,17 @@ def open_source(iso, cache_dir):
         if a.detect(iso):
             return a.Source(iso, cache_dir)
     raise ValueError(f"{iso}: not a supported source game (supported: {', '.join(a.GAME for a in ADAPTERS)})")
+
+
+def open_any(path, work_dir):
+    """A disc image (.iso/.chd, via build.disc_image) or a custom level download (.zip or folder with a
+    .level.json: THUG Pro levels)."""
+    import os
+    from thaw_sandbox.sources import thugpro
+    if thugpro.is_mod(path):
+        return thugpro.Source(path)
+    from thaw_sandbox.build import disc_image
+    return open_source(disc_image(path, work_dir), os.path.join(work_dir, "cache"))
 
 
 def identity(source, code):
@@ -41,3 +54,43 @@ def dedupe(chosen):
                 skipped.append((s, code, name, b[0]))
         kept.append((s, mine))
     return kept, skipped
+
+
+# .chd images cannot be identified without extracting them (minutes each): their file names are matched instead
+# (first match wins; the window's disc check extracts and verifies them afterwards)
+CHD_NAME_HINTS = (("american wasteland", "THAW"), ("thaw", "THAW"), ("underground 2", "THUG2"), ("thug2", "THUG2"),
+                  ("underground", "THUG"), ("thug", "THUG"), ("pro skater 4", "THPS4"), ("thps4", "THPS4"),
+                  ("pro skater 3", "THPS3"), ("thps3", "THPS3"), ("extreme skate", "Disney Extreme Skate Adventure"))
+DISC_EXTS = (".iso", ".chd")
+
+
+def scan_folder(folder, depth=2):
+    """Find the supported discs in a folder (and its subfolders, depth levels). -> (found {"THAW" or adapter GAME:
+    path}, notes [str]): .iso files by their disc serial, .chd files by name; the first disc of each game wins."""
+    from thaw_sandbox import build as B
+    found, notes, paths = {}, [], []
+    for root, dirs, files in os.walk(folder):
+        if root[len(folder):].count(os.sep) >= depth:
+            dirs[:] = []
+        dirs[:] = sorted(d for d in dirs if not d.startswith("."))
+        paths += [os.path.join(root, f) for f in sorted(files) if f.lower().endswith(DISC_EXTS)
+                  and not f.startswith(".")]
+    for p in paths:
+        name = os.path.basename(p).lower()
+        if name.endswith(".chd"):
+            key = next((g for hint, g in CHD_NAME_HINTS if hint in name), None)
+            how = "by name"
+        else:
+            try:
+                key = "THAW" if B.is_thaw(p) else next((a.GAME for a in ADAPTERS if a.detect(p)), None)
+            except Exception:
+                key = None
+            how = "by its serial"
+        if key is None:
+            notes.append(f"not a supported game: {os.path.basename(p)}")
+        elif key in found:
+            notes.append(f"another {key} disc, not used: {os.path.basename(p)}")
+        else:
+            found[key] = p
+            notes.append(f"{key}: {os.path.basename(p)} ({how})")
+    return found, notes

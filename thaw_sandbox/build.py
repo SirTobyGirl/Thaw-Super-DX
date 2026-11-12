@@ -106,7 +106,7 @@ def build(thaw, wanted, out, work_dir, level_scripts=True, keep_duplicates=False
         raise ValueError(f"{thaw}: not Tony Hawk's American Wasteland (NTSC-U, {', '.join(THAW_SERIALS)})")
     srcs = []
     for path, codes in wanted:
-        s = sources.open_source(disc_image(path, work_dir), os.path.join(work_dir, "cache"))
+        s = sources.open_any(path, work_dir)
         avail = dict(getattr(s, "all_levels", s.levels)())
         codes = codes or [c for c, _ in s.levels()]
         bad = [c for c in codes if c not in avail]

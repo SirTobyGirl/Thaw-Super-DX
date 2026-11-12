@@ -35,7 +35,8 @@ def parse(b: bytes) -> tuple[list[int], list[Texture]]:
     hdr = 28 if ver == 5 else 24  # version 4 (THPS4) has no leading zero word
     o = 12
     groups, texs = [], []
-    for g in range(ngroups):
+    # the texture count is authoritative: Disney Extreme Skate Adventure's Olliewood says 10 groups and holds more
+    while len(texs) < ntex and o + 16 <= len(b):
         gcrc, _a, _b, n = struct.unpack_from("<4I", b, o)
         o += 16
         groups.append(gcrc)

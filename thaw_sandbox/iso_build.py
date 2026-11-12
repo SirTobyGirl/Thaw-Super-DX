@@ -4,7 +4,9 @@ The original layout puts the movies right after DATAP.WAD. This tool (on a refli
 /MOVIES file to size 0, extends DATAP.WAD over the freed space (954 MB of room) and moves DATAP.HED and its two
 lookup indexes (DATAPD.HDP, DATAPF.HDP) to the top of that space with padding. The image keeps its size and every
 other file its sector. Tried and rejected: rebuilding the image (genisoimage: the PS2 BIOS crashed in loadelf)
-and appending past the end of the 4 GB image (new files beyond the single-layer DVD size were never read).
+and appending past the end of the 4 GB image. (An early note said files beyond single-layer DVD size were never
+read; that test predates updating the DATAPD/DATAPF lookup indexes. PCSX2 reads larger images as one linear disc:
+a 6.9 GB image with music past 4.38 GB boots and plays.)
 
 usage: python -m thaw_sandbox.iso_build BASE.iso OUT.iso
 """
@@ -87,7 +89,8 @@ def _copy_up(f, src, dst, n):
 
 def build_keep_all(base, out, room):
     """Make room bytes for DATAP.WAD without dropping anything: every file after the WAD moves up, the image
-    grows (it must stay within a single-layer DVD), and the HED + lookup indexes go to the top of the new room.
+    grows (past single-layer DVD size if needed: a warning, emulators read it), and the HED + lookup indexes go
+    to the top of the new room.
     ISO9660 records, the volume size and UDF (entries, partition length, closing anchor) are updated."""
     from thaw_sandbox.iso_compact import sync_udf
     if os.path.abspath(base) == os.path.abspath(out):
@@ -101,10 +104,9 @@ def build_keep_all(base, out, room):
         total = os.path.getsize(out) // SECTOR
         meta = ("/DATAP.HED;1", "/DATAPD.HDP;1", "/DATAPF.HDP;1")
         r = -(-room // SECTOR) + sum(-(-(x[2] + HED_SLACK) // SECTOR) for x in files if x[3] in meta)
-        if total + r > DVD5_SECTORS:
-            raise ValueError(f"not enough room on a DVD for these levels without shrinking: "
-                             f"{(total + r - DVD5_SECTORS) * SECTOR / 2**20:.0f} MB over; choose fewer levels or "
-                             f"shrink the image")
+        if total + r > DVD5_SECTORS:  # fine for emulators; a burned single-layer DVD could not hold it
+            print(f"warning: the image will be {(total + r - DVD5_SECTORS) * SECTOR / 2**20:.0f} MB larger than a "
+                  f"single-layer DVD (fine in an emulator; shrink it to burn a disc)")
         wad = next(x for x in files if x[3] == "/DATAP.WAD;1")
         wad_end = wad[1] + -(-wad[2] // SECTOR)
         after = sorted((x for x in files if x[1] >= wad_end and x[2]), key=lambda x: -x[1])

@@ -2,6 +2,7 @@
 
   python -m thaw_sandbox list  DISC                      levels a source disc offers
   python -m thaw_sandbox build --thaw THAW.iso|.chd --add DISC[:code,code...] [--add ...] --out NEW.iso [--shrink] [--package DIR]
+  python -m thaw_sandbox build --scan FOLDER --out NEW.iso --shrink          every supported disc in FOLDER
 
 Discs are read only; the output is a new image. Supported sources: see thaw_sandbox/sources.
 """
@@ -24,19 +25,19 @@ def run_build(thaw, wanted, out, work=WORK, shrink=False, package_dir=None, keep
     if music:  # mega merge: the chosen games' soundtracks join THAW's playlist
         from thaw_sandbox import iso_build, music as M
         discs = []
+        from thaw_sandbox.sources import thugpro
         for path, _ in wanted:
+            if thugpro.is_mod(path):  # custom levels bring no soundtrack
+                continue
             p = B.disc_image(path, work)
             discs.append((p, sources.open_source(p, os.path.join(work, "cache"))))
         if shrink:
             M.merge(out, discs, log=B.log)
-        else:  # the full game keeps its old music WAD too: only what still fits a single-layer DVD
-            from thaw_sandbox import iso_manager as I
-            _, wlen = I.file_extent(out, "/MUSIC/MUSICP.WAD;1")
-            room = iso_build.DVD5_SECTORS * 2048 - os.path.getsize(out) - wlen - 8 * 2**20
-            if room > 64 * 2**20:
-                M.merge(out, discs, log=B.log, max_bytes=room)
-            else:
-                B.log("music: no room left on a DVD for more songs without shrinking; skipped")
+        else:  # the full game keeps its old music WAD too; the image may pass single-layer DVD size (warned)
+            M.merge(out, discs, log=B.log)
+            if os.path.getsize(out) > iso_build.DVD5_SECTORS * 2048:
+                B.log(f"warning: the image is {os.path.getsize(out) / 2**30:.1f} GB, larger than a single-layer DVD "
+                      f"(fine in an emulator; shrink it to burn a disc)")
     if shrink:
         from thaw_sandbox import iso_compact
         B.log("shrinking the image ...")
@@ -57,9 +58,12 @@ def main(argv=None):
     ls.add_argument("disc")
     ls.add_argument("--work", default=WORK)
     b = sub.add_parser("build", help="build a new THAW image")
-    b.add_argument("--thaw", required=True, help="your Tony Hawk's American Wasteland disc (.iso or .chd)")
+    b.add_argument("--thaw", help="your Tony Hawk's American Wasteland disc (.iso or .chd); found by --scan if left out")
+    b.add_argument("--scan", metavar="FOLDER",
+                   help="use every supported disc found in FOLDER (and its subfolders), all levels; --add still works")
     b.add_argument("--add", action="append", default=[], metavar="DISC[:codes]",
-                   help="source disc, optionally with a comma list of level codes (default: all levels)")
+                   help="source disc, or a custom level (.zip or folder with a .level.json: THUG Pro levels), optionally "
+                        "with a comma list of level codes (default: all levels)")
     b.add_argument("--out", required=True, help="the new image to write")
     b.add_argument("--work", default=WORK,
                    help="working folder (extracted .chd images, caches)")
@@ -83,12 +87,21 @@ def main(argv=None):
         from thaw_sandbox import gui
         return gui.main()
     if a.cmd == "list":
-        s = sources.open_source(B.disc_image(a.disc, a.work), os.path.join(a.work, "cache"))
+        s = sources.open_any(a.disc, a.work)
         print(f"{s.GAME}:")
         for code, name in s.levels():
             print(f"  {code:5} {name}")
         return 0
     wanted = []
+    if a.scan:
+        found, notes = sources.scan_folder(a.scan)
+        print("\n".join(notes))
+        a.thaw = a.thaw or found.pop("THAW", None)
+        found.pop("THAW", None)
+        order = [m.GAME for m in sources.ADAPTERS]  # the window's row order: THUG2, THUG, THPS4, THPS3, Disney
+        wanted += [(found[g], None) for g in order if g in found]
+    if not a.thaw:
+        ap.error("no American Wasteland disc: give --thaw, or --scan a folder that has it")
     for spec in a.add:
         path, _, codes = spec.rpartition(":") if os.path.exists(spec.rpartition(":")[0] or "\0") else (spec, "", "")
         wanted.append((path, [c for c in codes.split(",") if c] or None))

@@ -19,7 +19,8 @@ TITLE = "THAW Super DX"
 SETTINGS = os.path.expanduser("~/.config/thaw-super-dx/gui.json")
 DISC_TYPES = [("PS2 disc images", "*.iso *.ISO *.chd *.CHD"), ("All files", "*")]
 ISO_TYPES = [("ISO image", "*.iso"), ("All files", "*")]
-GAME_NAMES = {"THUG2": "Underground 2", "THUG": "Underground", "THPS4": "Pro Skater 4", "THPS3": "Pro Skater 3"}
+GAME_NAMES = {"THUG2": "Underground 2", "THUG": "Underground", "THPS4": "Pro Skater 4", "THPS3": "Pro Skater 3",
+              "Disney Extreme Skate Adventure": "Disney Extreme Skate Adventure"}
 GREY, GOOD, BAD = "gray", "#2a7a2a", "#b02020"
 
 
@@ -67,20 +68,46 @@ def check_disc(path, game=None, work=cli.WORK, progress=lambda s: None):
     return True, game.GAME, src
 
 
-class _Writer:
-    """stdout replacement for the worker thread: lines go to the window."""
+BUILD_LOG = os.path.expanduser("~/.cache/thaw-super-dx/last_build.log")
 
-    def __init__(self, q):
-        self.q, self.buf = q, ""
+
+def _log_line(line):
+    try:
+        os.makedirs(os.path.dirname(BUILD_LOG), exist_ok=True)
+        with open(BUILD_LOG, "a") as f:
+            f.write(line.rstrip("\n") + "\n")
+    except OSError:
+        pass
+
+
+class _Writer:
+    """stdout replacement for the worker thread: lines go to the window, and with timestamps to the build log
+    (~/.cache/thaw-super-dx/last_build.log, started afresh for each build)."""
+
+    def __init__(self, q, path=None):
+        self.q, self.buf, self.path = q, "", path
+        if path:
+            try:
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                open(path, "w").close()
+            except OSError:
+                self.path = None
 
     def write(self, s):
         self.buf += s
         while "\n" in self.buf:
             line, self.buf = self.buf.split("\n", 1)
             self.q.put(("log", line))
+            if self.path:
+                import time
+                _log_line(time.strftime("%H:%M:%S ") + line)
 
     def flush(self):
         pass
+
+    def close(self):
+        if self.buf:
+            self.write("\n")
 
 
 class DiscRow:
@@ -269,6 +296,11 @@ class App:
         ttk.Label(d, text="Leave a game empty to skip it. Levels… picks single levels (all by default).",
                   foreground=GREY, wraplength=700).grid(row=2 + 2 * len(sources.ADAPTERS), column=0, columnspan=5,
                                                         sticky="w", pady=(6, 0))
+        ttk.Button(d, text="Scan a folder…", command=self.scan_folder).grid(
+            row=3 + 2 * len(sources.ADAPTERS), column=0, sticky="w", pady=(6, 0))
+        ttk.Label(d, text="finds your discs in a folder (and its subfolders) and fills in the rows",
+                  foreground=GREY).grid(row=3 + 2 * len(sources.ADAPTERS), column=1, columnspan=4, sticky="w",
+                                        pady=(6, 0))
 
         g = ttk.LabelFrame(f, text="Levels from real places - EXPERIMENTAL (generated, needs internet)", padding=10)
         g.grid(row=3, column=0, sticky="ew", pady=(10, 0))
@@ -320,7 +352,7 @@ class App:
         self.music = tk.BooleanVar(value=st.get("music", True))
         ttk.Checkbutton(o, text="Add the soundtracks of the chosen games to the playlist", variable=self.music).grid(
             row=6, column=0, columnspan=3, sticky="w", pady=(6, 0))
-        ttk.Label(o, text="Up to ~2 GB more with all three games. Without Shrink, only what still fits on a DVD.",
+        ttk.Label(o, text="Up to ~2 GB more. Without Shrink the image can pass DVD size (fine in an emulator).",
                   foreground=GREY, wraplength=680).grid(row=7, column=0, columnspan=3, sticky="w", padx=(24, 0))
         ttk.Label(o, text="Save as", width=10).grid(row=5, column=0, sticky="w", pady=(10, 0))
         self.out = tk.StringVar(value=st.get("out", os.path.expanduser("~/THAW Super DX.iso")))
@@ -552,6 +584,28 @@ class App:
             return "The folder to save into does not exist."
         return None
 
+    def scan_folder(self):
+        """Pick a folder; every supported disc found there fills its row (rows with nothing found are kept)."""
+        start = os.path.dirname(self.thaw.get().strip()) or os.path.expanduser("~")
+        folder = filedialog.askdirectory(title="Folder with your disc images", initialdir=start, mustexist=True)
+        if not folder:
+            return
+        found, notes = sources.scan_folder(folder)
+        for row in self.rows:
+            key = "THAW" if row.game is None else row.game.GAME
+            if key in found and os.path.abspath(found[key]) != os.path.abspath(row.path.get().strip() or "."):
+                row.path.set(found[key])
+                row.selected = None
+                row.changed()
+        if found:
+            msg = f"Found {len(found)} disc{'s' if len(found) != 1 else ''} in\n{folder}\n\n" + "\n".join(notes)
+            if any(p.lower().endswith(".chd") for p in found.values()):
+                msg += "\n\n.chd images are matched by name and checked (extracted) now; this can take a few minutes."
+            messagebox.showinfo(TITLE, msg, parent=self.root)
+        else:
+            messagebox.showwarning(TITLE, f"No supported discs found in\n{folder}" +
+                                   ("\n\n" + "\n".join(notes) if notes else ""), parent=self.root)
+
     def start(self):
         if self.busy:
             return
@@ -585,23 +639,30 @@ class App:
 
     def worker(self, *args):
         old = sys.stdout
-        sys.stdout = _Writer(self.q)
+        sys.stdout = _Writer(self.q, BUILD_LOG)
         try:
             added = cli.run_build(*args)
             self.q.put(("done", (args[2], added, args[5])))
-        except Exception as e:
+        except BaseException as e:  # anything: the window must always hear that the build ended
+            import traceback
+            sys.stdout.write(traceback.format_exc())
             self.q.put(("fail", e))
         finally:
+            sys.stdout.close()
             sys.stdout = old
 
     def poll(self):
         try:
             while True:
                 kind, x = self.q.get_nowait()
-                getattr(self, "on_" + kind)(x)
+                try:
+                    getattr(self, "on_" + kind)(x)
+                except Exception as e:  # a failing handler must not stop the polling (the window would freeze)
+                    _log_line(f"window: on_{kind} failed: {e!r}")
         except queue.Empty:
             pass
-        self.root.after(100, self.poll)
+        finally:
+            self.root.after(100, self.poll)
 
     def on_check(self, x):
         row, p, res = x
@@ -644,14 +705,25 @@ class App:
         msg = f"{len(added)} levels added.\n\nNew image:\n{out}"
         if pkg:
             msg += f"\n\nEmulator-ready folder:\n{pkg}"
-        messagebox.showinfo(TITLE, msg)
+        self._front()
+        messagebox.showinfo(TITLE, msg, parent=self.root)
 
     def on_fail(self, e):
         self.finish()
         self.bar.configure(value=0)
         self.state.set("Build failed.")
         self.on_log(f"error: {e}")
-        messagebox.showerror(TITLE, f"The build failed:\n\n{e}")
+        self._front()
+        messagebox.showerror(TITLE, f"The build failed:\n\n{e}\n\nDetails: {BUILD_LOG}", parent=self.root)
+
+    def _front(self):
+        """Raise the window so its message box does not open hidden behind it."""
+        try:
+            self.root.deiconify()
+            self.root.lift()
+            self.root.focus_force()
+        except tk.TclError:
+            pass
 
     def close(self):
         if self.busy and not messagebox.askyesno(TITLE, "A build is running. Stop it and quit?"):
@@ -668,7 +740,10 @@ def main():
         pass
     App(root)
     root.mainloop()
-    return 0
+    # the window is gone: end the process even if a build thread or Tcl teardown is still holding on (a closed
+    # window once left the program running in the background)
+    sys.stdout.flush()
+    os._exit(0)
 
 
 if __name__ == "__main__":

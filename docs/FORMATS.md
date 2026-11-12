@@ -22,7 +22,9 @@ paths. `w0..w19` = 32-bit words of a record.
 
 **Image.** UDF bridge (ISO9660 + UDF 1.02). Everything below the first file (system area, volume descriptors,
 directories, UDF file entries: sectors 0..348) must stay where it is. Rebuilding the image with genisoimage made
-the PS2 BIOS crash in loadelf, and files placed beyond the single-layer DVD size (2,295,104 sectors) were never read.
+the PS2 BIOS crash in loadelf. Images may grow past single-layer DVD size (2,295,104 sectors): PCSX2 opens them as
+one linear single-layer disc and the game reads data beyond it (checked with a 6.9 GB image); only burning a disc
+needs the shrunk size.
 What works: change file extents only (ISO9660 records + UDF file entries + partition length + closing anchor),
 e.g. grow DATAP.WAD over /MOVIES. [iso_build, iso_compact]
 
@@ -157,16 +159,53 @@ when its LEVEL_VISITED flag is set. [level_register, zone_rename, sandbox_patch]
   `CBP = top - (palette blocks of textures 0..i)`, T4 1 block, T8 CT16 2, T8 CT32 4, unpalettised 0.
   Clear vertex flag 0x4000, node w14, flag 0x400 and the 0xFF top byte of w7. [thps4_geom]
 - **THPS4 node positions** have Z mirrored against the geometry (as do THPS3's). [sources/thps4]
+- **Disney's Extreme Skate Adventure** (SLUS-20607) is the THPS4 engine with THPS4's formats; every level file is
+  in PRE archives (`<code>scn.pre` geometry/textures/sky, `<code>col.pre`, `<code>.pre` nodes + scripts). One
+  texture dictionary (Olliewood) has more groups than its header's group count: read until the texture count is
+  reached. A few textures are direct colour (CT32/CT24/CT16): converted to 8-bit palettised. [sources/desa]
 - **THPS4 QB:** 0x02 = newline + line number; random has no weights; old if/else/endif (0x25/0x26/0x28) must
   become fast ifs or loads hang. [thps4_qb]
 - **PRE archives:** `u32 total, u32 version, u32 count`, entries `{size, compressed size, name length,
   [v3: name crc], name, data}` 4-aligned; compressed data uses the same LZSS as THAW scripts. [sources/thps4]
 - **THPS3 (RenderWare 3.1):** chunks `{u32 type, u32 size, u32 0x310}`. World struct ends with a format word
   (0x01 tristrip, 0x08 prelit, 0x10 normals, 0x80 two UV sets); atomic sectors hold vertices, normals, prelit
-  colours (255 = full), UVs and triangles `{u16 material, u16 a, b, c}` (front face as above); Neversoft chunk
-  0x294AF01 in each sector = `u32, u16 face flags per triangle, ..., sector checksum`. Texture rasters are linear
-  T4/T8 with GS-ready palettes (raster format 0x4000 4-bit, 0x2000 8-bit, 0x0500 CT32, 0x0100 CT16, 0x8000 mips).
+  colours (255 = full), UVs and triangles `{u16 material, u16 a, b, c}` (front face as above).
+  The material list struct is `{count, count x i32}`: -1 = a new Material chunk follows, otherwise the index of an
+  earlier material to reuse (ignore it and later indices shift; Rio reuses 8).
+  Neversoft chunk 0x294AF01 in each **sector** = `u32 6, u16 face flags per triangle, ..., sector checksum` (the
+  name of the sector's `EnvironmentObject` node). In each **material**: byte 19 flags (0x02 collision-only mesh,
+  0x08 transparent, 0x10 decal), byte 20 terrain (standard list), byte 37 GS ALPHA (0x00/0x0A/0x44 normal,
+  0x48/0x68 additive, 0x42/0x62 subtractive, 0x64 fixed blend), byte 41 FIX, then the pass's Texture chunk.
+  Trigger faces (0x40) run the `TriggerScript` of the node named like the sector (gaps, glass, bouncy objects);
+  in THAW the collision object must carry that name and the node must exist, or the engine reads a null node.
+  Texture rasters: T4/T8 with GS-ready palettes (raster format 0x4000 4-bit, 0x2000 8-bit, 0x0500 CT32, 0x0100
+  CT16, 0x8000 mips), or **16/32-bit direct colour** (THPS2-era textures in Warehouse, Burnside, Roswell).
+  Each level's `.qb` holds both its node array and its scripts. Sky worlds are separate (`Levels\<x>_Sky`).
+  **Level objects** (`<code>.dff`): one clump per object, back to back; the clump's last chunk, Neversoft's
+  `0x294AF01 {u32 1, u32 name crc}`, lies past the clump's size field (scan for the next clump header). Geometry
+  struct (RW before 3.4) = `{format, triangles, vertices, morph targets, 3 x f32 surface properties}`, prelit
+  colours, UVs, triangles `{u16 v2, v1, material, v3}`, morph target `{sphere, has verts, has normals, verts}`.
+  Vertices are in the object's own space; the node of the same name (GameObject, BouncyObject) places it
+  (Position with Z mirrored, Y rotation reversed).
   [rw, sources/thps3]
+
+### THUG Pro custom levels (PC)
+
+Downloads (e.g. thpsgoat.com) hold `<scene>.level.json` (hand-written JSON, trailing commas) and PRE archives
+renamed `.prx`: `<scene>scn.prx` (`.scn.xbx` scene + `.tex.xbx` textures, plus a sky), `<scene>col.prx` (`.col.xbx`
+= THUG2 collision version 10) and `<scene>_scripts.prx` (`<scene>.qb` = THUG2 nodes; script files may be empty).
+- **Scene (.scn.xbx):** `3 x u32, u32 materials, materials, i32 sectors, sectors`. Material: checksum, name
+  checksum, passes, alpha cutoff, sorted, draw order, single sided, no culling, z bias, grass, specular; per pass
+  texture checksum, flags (0x10 decal, 0x40 transparent, 0x800 animated...), colour, blend mode (THUG2 list:
+  1 add, 2 add fixed, 3 subtract, 4 sub fixed, 5 blend, 6 blend fixed ...), fixed alpha, addressing, filtering,
+  optional wibble / animation blocks, 4 words of mip info. Sector: checksum, bone, flags (0x01 UVs, 0x02 colours,
+  0x04 normals, 0x10 weights, 0x800000 billboard), meshes; mesh: bounds, material checksum, LODs; per LOD an index
+  list, a **triangle strip** (u16), 14 bytes, u8 stride, u16 vertex count, u16 buffers, then vertices
+  `{3 f32 position, [normal], [b g r a, 128 = 1.0], UV sets}` and a small trailer (vertex shaders, wibble flag,
+  pixel shader block `{i32, i32 n, n bytes}`). Positions are in THUG2's frame (matching collision and nodes).
+- **Textures (.tex.xbx):** `i32 version, i32 count`; per texture `checksum, width, height, levels, texel depth,
+  palette depth, DXT version (1/2 = DXT1, 5), palette size`, palette, then each level `{u32 size, data}`.
+  [xbx, sources/thugpro]
 
 ## Engine facts and limits
 

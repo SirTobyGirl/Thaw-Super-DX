@@ -13,3 +13,5 @@ harness/vk.fifo
 /dist/
 # per-machine harness settings
 harness/env.local.sh
+# third-party mods you add for testing (not ours to publish)
+/Mods/

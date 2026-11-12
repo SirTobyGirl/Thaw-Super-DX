@@ -1,7 +1,7 @@
 #!/bin/bash
 # usage: harness/play_check.sh ISO DOWNS NAME [normal]  - load the level at list position DOWNS (shrunk image, or a
 # full-game image with 'normal'), then play ~60 s of mixed input (push, turn, ollie, grind, flip) with a screenshot
-# every round; prints "DOWNS: OK|FROZEN at round k|CRASH (markers)" and the crash markers from the emulator log.
+# every round (KEEP_GOING=1: do not stop at the first crash marker); prints "DOWNS: OK|FROZEN at round k|CRASH (markers)" and the crash markers from the emulator log.
 cd "$(dirname "$0")/.."
 ISO=$1; N=$2; S=$3; MODE=$4
 . harness/env.sh
@@ -21,7 +21,8 @@ print(sum(ImageChops.difference(a,b).histogram()[24:]))" 2>/dev/null)
     [ $frozen -ge 2 ] && { res="FROZEN at round $r"; break; }
   fi
   prev="${S}_r$r"
-  grep -qE 'Unknown R5900|TLB Miss' "$L" && { res="CRASH"; break; }
+  # KEEP_GOING=1: record crash markers but play every round (non-fatal null reads)
+  grep -qE 'Unknown R5900|TLB Miss' "$L" && { res="CRASH"; [ -z "$KEEP_GOING" ] && break; }
 done
 pkill -f '^pcsx2-qt'; sleep 2
 echo "$N: $res  markers: $(grep -E 'TLB Miss|Unknown R5900' "$L" | grep -o 'pc=0x[0-9a-f]*' | sort | uniq -c | tr '\n' ' ')"

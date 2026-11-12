@@ -1,18 +1,24 @@
 """Tony Hawk's Pro Skater 3 (PS2, NTSC-U SLUS-20013) as a level source.
 
 THPS3 runs on RenderWare: a level is a world (pre\\<code>bsp.pre: levels\\<code>\\<code>.bsp + .tex dictionary;
-the .dff clump of movable objects is not used yet) and a Neversoft node file (pre\\<code>.pre:
-levels\\<code>\\<code>.qb, read with the THPS4 QB reader). There is no Neversoft geometry to convert, so the level
-is rebuilt like a generated one (thaw_sandbox.mapgen): the world's triangles become a Scene (render + collision
-from the same faces, Neversoft face flags kept), its textures go into THAW texture groups, restarts and rails
-come from the node file. Node positions have Z mirrored against the world (as in THPS4).
+the .dff clump of movable objects is not used yet) and a Neversoft .qb holding both the nodes and the level's
+scripts (pre\\<code>.pre, read with the THPS4 QB reader).
+The world becomes THAW geometry and collision through mapgen's writers (thaw_sandbox.rw reads it):
+  * every triangle collides per its Neversoft face flags; materials flagged 0x02 (CR_Collision, CR_TriggerPlane,
+    untextured proxies) and invisible faces are not drawn
+  * materials keep their GS blend mode (additive / subtractive / fixed: own ALPHA register); decals (0x10) and
+    blended materials are drawn after the surfaces they lie on; terrain types (sounds) carry over
+  * trigger faces keep their flag only in sectors whose node has a TriggerScript; their collision objects take the
+    sector's name, which is how the engine finds the node when the skater touches them
+Nodes, rails, restarts, the level scripts (gaps, breakable glass, ...) and the gap list are then converted by
+level_convert.convert_level like THPS4's (prebuilt geometry). EnvironmentObject (THPS3's level geometry nodes)
+and objects THAW cannot spawn become Waypoints, keeping their TriggerScript. Node Z is mirrored as in THPS4.
 """
 import math
-import struct
 
-from thaw_sandbox import iso_manager as I, level_convert as LC, pak, qb_data as QD, qb_parser as Q, rw
+from thaw_sandbox import geom as GM, iso_manager as I, level_convert as LC, pak, qb_data as QD, qb_parser as Q, rw
 from thaw_sandbox import thaw_tex as TT, thps4_qb, thug2_qb, zone
-from thaw_sandbox.mapgen import col_writer, geom_writer, nodes as gen_nodes, scene as S
+from thaw_sandbox.mapgen import col_writer, geom_writer, scene as S
 from thaw_sandbox.sources.thps4 import read_pre
 from thaw_sandbox.sources.thug2 import _hed
 
@@ -30,6 +36,10 @@ ZONE_HINTS = {"foun": "z_fo", "can": "z_cn", "rio": "z_ri", "sub": "z_su", "si":
 # Neversoft face flags (THPS3/THPS4 collision): 0x10 not collidable, 0x80 camera collide (inverted against later
 # games, as thps4_col), 0x1000 invisible
 NON_COLLIDABLE, CAMERA, INVISIBLE = 0x10, 0x80, 0x1000
+# 0x40 trigger: the engine then runs the TriggerScript of the node named like the collision object (THPS3: the
+# sector's LevelGeometry node). Sectors are merged into generated collision objects and the level scripts are not
+# converted yet, so the lookup found no node and read a null struct (FUN_002419a0 -> FUN_002ae260): cleared.
+TRIGGER = 0x40
 MAX_EDGE = 900.0  # render leaves and collision objects store 16-bit offsets: split longer triangles
 
 
@@ -56,17 +66,56 @@ def _split(p, uv, col):
     return out
 
 
-def world_scene(world):
-    """RenderWare world -> mapgen Scene (materials named by texture) and per-material vertex colour factor."""
+def ns_material(m):
+    """Neversoft's material chunk -> (flag byte, GS ALPHA blend byte, FIX, terrain). Flag byte: 0x02 collision-only mesh
+    (CR_TriggerPlane, CR_Collision, untextured proxies), 0x08 transparent, 0x10 decal. ALPHA as the GS register's
+    low byte: 0x00/0x0A/0x44 normal, 0x48/0x68 additive, 0x42/0x62 subtractive, 0x64 fixed blend (FIX = factor).
+    Terrain (byte 20) uses Neversoft's standard list (1 CONCSMOOTH ... 38 METALFENCE), as THUG2/THAW collision does.
+    Blend offsets as neversoft-multitool reads them (bytes 37 and 41)."""
+    for t, o, n in rw.chunks(m.ext, 0, len(m.ext)):
+        if t == rw.NS_EXT and n >= 44:
+            d = m.ext[o:o + n]
+            return d[19], d[37], d[41], d[20] if d[20] < 39 else 0
+    return 0, 0, 0, 0
+
+
+NORMAL_BLENDS = (0x00, 0x0A, 0x44)  # drawn as the template leaf's ALPHA 0x44 + alpha test
+
+
+def material_key(m):
+    """Scene material name: the texture, plus the blend mode when it differs from normal drawing."""
+    _, gs, fix, _ = ns_material(m)
+    tex = m.texture.lower()
+    return tex if gs in NORMAL_BLENDS else f"{tex}#{gs:02x}{fix:02x}"
+
+
+def world_scene(world, triggers=frozenset()):
+    """RenderWare world -> (mapgen Scene, styles {material key: (GS register overrides, leaf flag bits)}).
+    Collision comes from the face flags of every triangle; drawing skips collision-only materials, untextured
+    ones and invisible faces. triggers: sector names whose node has a TriggerScript: their faces keep the trigger
+    flag and their collision objects take the sector's name (other trigger flags are cleared)."""
     sc = S.Scene()
+    sc.late = set()
+    styles = {}
+    info = []
     for m in world.materials:
-        if m.texture:
-            sc.materials.setdefault(m.texture.lower(), S.Material(m.texture.lower()))
+        mflags, gs, fix, terrain = ns_material(m)
+        key = material_key(m)
+        draw = bool(m.texture) and not mflags & 0x02
+        if draw:
+            sc.materials.setdefault(key, S.Material(key))
+            if gs not in NORMAL_BLENDS:
+                styles[key] = ({0x42: gs | fix << 32}, 0)
+            if mflags & 0x10 or gs not in NORMAL_BLENDS:
+                sc.late.add(key)  # decals and blended surfaces: drawn after the surfaces they lie on
+        info.append((key, draw, terrain))
     for sec in world.sectors:
+        trig = sec.name in triggers
         for (mi, a, b, c), fl in zip(sec.tris, sec.flags):
             mat = world.materials[mi] if mi < len(world.materials) else None
-            if mat is None or not mat.texture:
+            if mat is None:
                 continue
+            key, draw, terrain = info[mi]
             mc = mat.colour
             idx = (a, b, c)  # RenderWare winding = mapgen's front-face rule (checked: floors face up)
             p = tuple(sec.verts[i] for i in idx)
@@ -78,45 +127,72 @@ def world_scene(world):
             # RenderWare prelit colours: 255 = full; THAW vertex colours: 128 = 1.0 (material colours: 128 = 1.0)
             col = tuple(tuple(min(255, sec.colours[i][k] * mc[k] // 255) for k in range(3)) +
                         (min(128, sec.colours[i][3] // 2 + 1),) for i in idx)
+            render, collide = draw and not fl & INVISIBLE, not fl & NON_COLLIDABLE
+            if not render and not collide:
+                continue
+            flags = (fl ^ CAMERA) & (0xFFFF if trig else ~TRIGGER & 0xFFFF)
             for pp, uu, cc in _split(p, uv, col):
-                sc.tris.append(S.Tri(pp, uu, cc, mat.texture.lower(), (fl ^ CAMERA) & 0xFFFF, 0,
-                                     render=not fl & INVISIBLE, collide=not fl & NON_COLLIDABLE))
-    return sc
+                t = S.Tri(pp, uu, cc, key, flags, terrain, render=render, collide=collide)
+                if trig:
+                    t.obj = sec.name
+                sc.tris.append(t)
+    return sc, styles
 
 
-def node_scene(sc, qb):
-    """Restarts and rails from the THPS3 node file into the scene (Z mirrored to the world's frame)."""
+def add_objects(sc, styles, objects, nodes):
+    """Level objects (.dff, placed by the node of the same name: GameObjects, BouncyObjects) drawn where they start,
+    without collision (THPS3 moves, breaks or bounces many of them by script; none of that runs yet).
+    Node frame -> world: Z mirrored, so the Y rotation turns the other way."""
     H = Q.qbcrc
-    q = thug2_qb.parse(thps4_qb.to_thug2(qb))
-    na = max((v for v in q.data.values() if isinstance(v, QD.Array)), key=lambda a: len(a.items))
-    ns = [{k: v for k, v in s.items} for s in na.items if isinstance(s, QD.Struct)]
-    cls = lambda d: getattr(d.get(H("Class")), "crc", None)
-    pos = lambda d: (lambda p: (p[0], p[1], -p[2]))(d.get(H("Position")) or d.get(H("Pos")) or (0.0, 0.0, 0.0))
-    for d in ns:
-        if cls(d) == H("Restart"):
-            ang = d.get(H("Angles")) or (0.0, 0.0, 0.0)
-            sc.starts.append((pos(d), -ang[1] + math.pi))
-    rails = {i for i, d in enumerate(ns) if cls(d) == H("RailNode")}
-    linked = {}
-    for i in rails:
-        lk = d.get(H("links")) if (d := ns[i]) else None
-        nxt = [j for j in (lk.items if isinstance(lk, QD.Array) else []) if j in rails]
-        linked[i] = nxt
-    has_prev = {j for v in linked.values() for j in v}
-    seen = set()
-    for start in sorted(rails, key=lambda i: (i in has_prev, i)):
-        if start in seen:
+    n = 0
+    for ob in objects:
+        nd = nodes.get(ob.name)
+        if nd is None:
             continue
-        chain, i = [], start
-        while i is not None and i not in seen:
-            seen.add(i)
-            chain.append(pos(ns[i]))
-            i = linked[i][0] if linked[i] else None
-        if i is not None:  # closed loop
-            chain.append(pos(ns[i]))
-        if len(chain) >= 2:
-            sc.rails.append(S.Rail(chain, "TERRAIN_GRINDMETAL"))
-    return sc
+        px, py, pz = nd.get(H("Position")) or (0.0, 0.0, 0.0)
+        ax, ay, az = nd.get(H("Angles")) or (0.0, 0.0, 0.0)
+        ca, sa = math.cos(-ay), math.sin(-ay)
+        place = lambda v: (ca * v[0] + sa * v[2] + px, v[1] + py, -sa * v[0] + ca * v[2] - pz)
+        for mi, a, b, c in ob.tris:
+            mat = ob.materials[mi] if mi < len(ob.materials) else None
+            if mat is None or not mat.texture or ns_material(mat)[0] & 0x02:
+                continue
+            key = material_key(mat)
+            _, gs, fix, _ = ns_material(mat)
+            if key not in sc.materials:
+                sc.materials[key] = S.Material(key)
+                if gs not in NORMAL_BLENDS:
+                    styles[key] = ({0x42: gs | fix << 32}, 0)
+                    sc.late.add(key)
+            idx = (a, b, c)
+            p = tuple(place(ob.verts[i]) for i in idx)
+            uv = tuple(ob.uvs[i] if ob.uvs else (0.0, 0.0) for i in idx)
+            if not all(map(math.isfinite, (x for q in p + uv for x in q))):
+                continue
+            mc = mat.colour
+            col = tuple(tuple(min(255, ob.colours[i][k] * mc[k] // 255) for k in range(3)) + (128,) for i in idx)
+            for pp, uu, cc in _split(p, uv, col):
+                sc.tris.append(S.Tri(pp, uu, cc, key, 0, 0, render=True, collide=False))
+        n += 1
+    return n
+
+
+def node_file(qb):
+    """THPS3 level .qb (nodes + scripts) in THUG2 form, the names of nodes that have a TriggerScript, and the
+    nodes by name {crc: {key: value}}."""
+    H = Q.qbcrc
+    t2 = thps4_qb.to_thug2(qb)
+    q = thug2_qb.parse(t2)
+    na = max((v for v in q.data.values() if isinstance(v, QD.Array)), key=lambda a: len(a.items))
+    trig, nodes = set(), {}
+    for st in na.items:
+        if isinstance(st, QD.Struct):
+            d = {k: v for k, v in st.items}
+            if d.get(H("Name")) is not None:
+                nodes[d[H("Name")].crc] = d
+                if H("TriggerScript") in d:
+                    trig.add(d[H("Name")].crc)
+    return t2, trig, nodes
 
 
 class Source:
@@ -148,15 +224,22 @@ class Source:
         get = lambda files, ext: next(v for k, v in files.items() if k.endswith(f"\\{code}{ext}"))
         return rw.read_world(get(world, ".bsp")), rw.read_textures(get(world, ".tex")), get(lv, ".qb")
 
+    def level_objects(self, code):
+        world = read_pre(self.read(f"\\pre\\{code}bsp.pre"))
+        dff = next((v for k, v in world.items() if k.endswith(f"\\{code}.dff")), b"")
+        return rw.read_objects(dff)
+
     def build_zone(self, code, template_zone, zone_name, template, disc=None):
         world, texs, qb = self.level_parts(code)
-        sc = node_scene(world_scene(world), qb)
+        nodes_qb, triggers, nodes = node_file(qb)
+        sc, styles = world_scene(world, triggers)
+        n_objects = add_objects(sc, styles, self.level_objects(code), nodes)
         mats = sorted(sc.materials)
         grey = rw.Texture("grey", 8, 8, 0x14, 0, LC.GREY, [bytes(32)])
         group = Q.qbcrc(f"{zone_name}_thps3")
         new = []
         for m in mats:
-            src = texs.get(m, grey)
+            src = texs.get(m.split("#")[0], grey)
             new.append(TT.NewTexture(Q.qbcrc(f"{zone_name}_{m}"), src.width, src.height, src.psm, src.cpsm, src.clut,
                                      src.mips[:4], group=group))
         TT.split_groups(new)
@@ -169,12 +252,24 @@ class Source:
         tab = zone.entries(template_zone)
         big = LC._biggest(template_zone, tab)
         gp = pak.data_pos(big[".geom"], 0)
-        geom, gst = geom_writer.write(template_zone[gp:gp + big[".geom"].size], sc.render_items(), tex_index,
-                                      name_prefix=zone_name)
+        strips = sorted(sc.render_items(), key=lambda it: it[0] in sc.late)
+        geom, gst = geom_writer.write(template_zone[gp:gp + big[".geom"].size], strips, tex_index,
+                                      name_prefix=zone_name, styles=styles)
+        geom, _ = GM.bind_textures(geom, tex)
         col = col_writer.write(sc.collision_tris(), name_prefix=zone_name)
-        zb, st = LC.assemble_level(template_zone, tex, geom, col, gen_nodes.build(sc, zone_name), zone_name, template)
+        # nodes (restarts, rails, trigger nodes), the level's scripts (gaps, glass, ...) and the gap list are
+        # converted like THPS4's; EnvironmentObject (THPS3's level geometry) and objects THAW cannot spawn become
+        # Waypoints, which keep their TriggerScript
+        files = {"qb": nodes_qb, "scripts": nodes_qb, "scripts_only": True, "flip_z": True,
+                 "neutralise": ("ProximNode", "EnvironmentObject", "BouncyObject", "GenericNode"),
+                 "trigger_classes": ("RailNode", "Waypoint")}
+        zb, st = LC.convert_level(template_zone, files, code, zone_name, lambda t: {}, template,
+                                  prebuilt=(tex, geom, col))
         st.update(gst)
-        st["rails"] = len(sc.rails)
-        st["starts"] = len(sc.starts)
-        st["missing textures"] = sum(1 for m in mats if m not in texs)
+        st["textures"] = len(new)
+        st["leaves"] = gst.get("leaves", sum(1 for _, n in GM.walk(geom) if n[7] & GM.LEAF))
+        st["trigger sectors"] = len({sec.name for sec in world.sectors} & triggers)
+        st["missing textures"] = sum(1 for m in mats if m.split("#")[0] not in texs)
+        st["blended materials"] = len(styles)
+        st["objects"] = n_objects
         return zb, st

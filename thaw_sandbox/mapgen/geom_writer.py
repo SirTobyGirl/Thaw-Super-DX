@@ -59,8 +59,21 @@ class Template:
         raise ValueError("no template leaf of the expected type")
 
 
-def _chunk(t: Template, verts):
-    """One leaf's DMA/VIF chunk for verts [(pos rel. centre * 16 ints, w flags, (u, v), (r, g, b, a))]."""
+def _regs(t: Template, override):
+    """The template leaf's 5 GS register writes (lo, hi, register id) with some replaced: {register id: u64}."""
+    if not override:
+        return t.regs
+    out = bytearray(t.regs)
+    for i in range(len(out) // 12):
+        r = struct.unpack_from("<I", out, 12 * i + 8)[0] & 0xFF
+        if r in override:
+            struct.pack_into("<2I", out, 12 * i, override[r] & 0xFFFFFFFF, override[r] >> 32)
+    return bytes(out)
+
+
+def _chunk(t: Template, verts, regs=None):
+    """One leaf's DMA/VIF chunk for verts [(pos rel. centre * 16 ints, w flags, (u, v), (r, g, b, a))];
+    regs: GS register values replacing the template's ({0x42: ALPHA, 0x47: TEST, ...})."""
     n, R = len(verts), 5
     out = bytearray(8)  # DMA tag lo/hi, filled at the end
     w = lambda x: out.extend(struct.pack("<I", x))
@@ -69,7 +82,7 @@ def _chunk(t: Template, verts):
     w(0x6C01C000)
     out += t.reg_tag
     w(0x6800C001 | (R << 16))
-    out += t.regs
+    out += _regs(t, regs)
     w(0x01000103)
     w(0x6C01C000 | (1 + R))
     v0, v1, v2, _ = t.vtx_tag
@@ -114,9 +127,11 @@ def _pack_leaves(strips):
     return leaves
 
 
-def write(template: bytes, strips, tex_index, name_prefix="gen"):
+def write(template: bytes, strips, tex_index, name_prefix="gen", styles=None):
     """strips: [(material, [(pos, uv, col)])]; tex_index: material -> (group index, texture index) (1-based,
-    as in the zone's texture dictionary) -> geom bytes (texture registers not yet bound)."""
+    as in the zone's texture dictionary) -> geom bytes (texture registers not yet bound).
+    styles: material -> (GS register overrides {id: u64}, extra leaf flag bits), e.g. blended materials."""
+    styles = styles or {}
     t = Template(template)
     k = t.k
     leaves = _pack_leaves(strips)
@@ -138,12 +153,13 @@ def write(template: bytes, strips, tex_index, name_prefix="gen"):
         # keep UVs small: shift by whole repeats
         du, dv = math.floor(min(v[2][0] for v in verts)), math.floor(min(v[2][1] for v in verts))
         verts = [(q, fl, (u - du, v - dv), col) for q, fl, (u, v), col in verts]
-        chunk, field = _chunk(t, verts)
+        regs, extra = styles.get(mat, (None, 0))
+        chunk, field = _chunk(t, verts, regs)
         off = len(body) - k
         body += chunk
         n = list(t.leaf)
         n[0:7] = [struct.unpack("<I", struct.pack("<f", x))[0] for x in c + [math.sqrt(sum(h * h for h in half))] + half]
-        n[7] = 0x103
+        n[7] = 0x103 | extra
         n[8] = off
         n[9] = (t.leaf[9] & 0xFC000000) | (field << 16)
         g, ti = tex_index[mat]

@@ -121,12 +121,28 @@ def _half(src):
     return [bytes(a | b << 4 for a, b in zip(px[0::2], px[1::2]))]
 
 
+def _palettised(src):
+    """Direct-colour textures (GS CT32 / CT24 / CT16; a few in Disney Extreme Skate Adventure) -> 8-bit palettised
+    (top level only): the encoder's upload rules are only proven for T4/T8. Others pass through."""
+    if src is None or src.psm not in (0x00, 0x01, 0x02) or not src.mips:
+        return src
+    from thaw_sandbox import rw
+    w, h, d = src.width, src.height, src.mips[0]
+    if src.psm == 0x00:
+        px = [tuple(d[4 * i:4 * i + 4]) for i in range(w * h)]
+    elif src.psm == 0x01:
+        px = [tuple(d[3 * i:3 * i + 3]) + (0x80,) for i in range(w * h)]
+    else:
+        px = rw._direct(d, w, h, 16)
+    return rw.palettise(w, h, px)
+
+
 def convert_textures_and_geometry(tex_bytes, geom_bytes, resolve_refs, budget=0):
     """THUG2 texture dictionary + geometry -> THAW ones (bound to each other).
     budget: bytes to save by dropping the top mip level of the largest textures (0: keep all)."""
     _, t2 = T2.parse(tex_bytes)
     refs = resolve_refs(t2)
-    srcs = [(x, x if x.mips else refs.get(x.crc)) for x in t2]
+    srcs = [(x, _palettised(x if x.mips else refs.get(x.crc))) for x in t2]
     halve, saved = set(), 0
     for i in sorted((i for i, (_, s) in enumerate(srcs) if s is not None and _halvable(s)),
                     key=lambda i: -len(srcs[i][1].mips[0])):
@@ -162,9 +178,11 @@ def convert_textures_and_geometry(tex_bytes, geom_bytes, resolve_refs, budget=0)
 
 
 def convert_level(template_zone, files, code, zone_name, resolve_refs, template="z_ja", level_scripts=True,
-                  classic_consts=None):
+                  classic_consts=None, prebuilt=None):
     """classic_consts: THUG2's score globals (classic.thug2_constants) -> the level gets its classic goals
-    (classic.convert_goals) in the template's Goals script; None: no goals."""
+    (classic.convert_goals) in the template's Goals script; None: no goals.
+    prebuilt: (THAW texture dictionary, geometry with textures bound, THAW collision) made elsewhere (THPS3's
+    RenderWare worlds); nodes, scripts, rails, gaps and prefix tables are converted from files as usual."""
     zb = template_zone
     with_goals = classic_consts is not None and level_scripts and bool(files.get("scripts"))
     remap = classic.remap_table(code, zone_name) if with_goals else None
@@ -175,9 +193,13 @@ def convert_level(template_zone, files, code, zone_name, resolve_refs, template=
     nqb, rnb, node_items = convert_nodes(files["qb"], code, zone_name, orig_crc, flip_z=files.get("flip_z", False),
                              neutralise=files.get("neutralise", ()), trigger_classes=files.get("trigger_classes"),
                              with_rails=True, goal_objects=with_goals, remap=remap)
-    tex, geom, st = convert_textures_and_geometry(files["tex"], files["geom"], resolve_refs)
-    rep = {big[".tex"].pos: tex, big[".geom"].pos: geom, big[".col"].pos: CL.thug2_to_thaw(files["col"]),
-           big[".nqb"].pos: nqb}
+    if prebuilt:
+        tex, geom, col = prebuilt
+        st = {}
+    else:
+        tex, geom, st = convert_textures_and_geometry(files["tex"], files["geom"], resolve_refs)
+        col = CL.thug2_to_thaw(files["col"])
+    rep = {big[".tex"].pos: tex, big[".geom"].pos: geom, big[".col"].pos: col, big[".nqb"].pos: nqb}
     # rails come from the zone's rail table, not from the node array: the template's would give Kyoto's rails
     for e in tab:
         if struct.unpack_from("<I", zb, e.pos)[0] == rails.RNB_TYPE and e.size < 0x40000000:
@@ -195,7 +217,7 @@ def convert_level(template_zone, files, code, zone_name, resolve_refs, template=
     if level_scripts and files.get("scripts"):
         have = {it.name for it in sitems}
         _, extra = F.read(C.convert(files["scripts"], "x")[0])
-        extra = [it for it in extra if it.name not in have]
+        extra = [it for it in extra if it.name not in have and (it.vtype == 7 or not files.get("scripts_only"))]
         if SCRIPT_FILTER:  # bisection hook (harness)
             extra = SCRIPT_FILTER(extra)
         sitems += extra
@@ -237,7 +259,7 @@ def convert_level(template_zone, files, code, zone_name, resolve_refs, template=
     rep[pe.pos] = F.write(pcrc, pitems)
     out, budget = zone.rebuild(zb, rep), 0
     for _ in range(4):  # over the size cap: halve the largest textures until it fits
-        if len(out) <= MAX_ZONE_BYTES:
+        if len(out) <= MAX_ZONE_BYTES or prebuilt:
             break
         budget += len(out) - MAX_ZONE_BYTES + 0x8000
         tex, geom, st2 = convert_textures_and_geometry(files["tex"], files["geom"], resolve_refs, budget)

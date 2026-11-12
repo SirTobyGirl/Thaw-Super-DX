@@ -27,15 +27,17 @@ def _objects(tris):
     by = collections.defaultdict(list)
     for t in tris:
         c = [sum(p[i] for p in t.p) / 3 for i in range(3)]
-        # height too: fixed verts are u16 / 16 from the object's bbox min (tall levels)
-        by[(math.floor(c[0] / CELL), math.floor(c[2] / CELL), math.floor(c[1] / CELL))].append(t)
+        # height too: fixed verts are u16 / 16 from the object's bbox min (tall levels); t.obj (optional): the
+        # object's name checksum (THPS3 trigger sectors: the engine runs the TriggerScript of the node so named)
+        by[(getattr(t, "obj", None) or 0, math.floor(c[0] / CELL), math.floor(c[2] / CELL),
+            math.floor(c[1] / CELL))].append(t)
     objs = []
     for key in sorted(by):
         cur, idx, verts = [], {}, []
         for t in by[key]:
             new = [p for p in t.p if p not in idx]
             if cur and (len(verts) + len(new) > MAX_VERTS or len(cur) >= MAX_FACES):
-                objs.append((verts, cur))
+                objs.append((verts, cur, key[0]))
                 cur, idx, verts = [], {}, []
             ids = []
             for p in t.p:
@@ -45,7 +47,7 @@ def _objects(tris):
                 ids.append(idx[p])
             cur.append((ids, t.flags, t.terrain))
         if cur:
-            objs.append((verts, cur))
+            objs.append((verts, cur, key[0]))
     return objs
 
 
@@ -53,13 +55,14 @@ def write(tris, name_prefix="gen") -> bytes:
     objs = _objects(tris)
     recs, fixed, inten, faces, nodes, findex = bytearray(), bytearray(), bytearray(), bytearray(), bytearray(), []
     gmin, gmax = [math.inf] * 3, [-math.inf] * 3
-    for i, (verts, fs) in enumerate(objs):
+    for i, (verts, fs, name) in enumerate(objs):
         lo = [min(p[j] for p in verts) for j in range(3)]
         hi = [max(p[j] for p in verts) for j in range(3)]
         assert max(h - l for l, h in zip(lo, hi)) * 16 < 65535, "collision object too large for fixed verts"
         for j in range(3):
             gmin[j], gmax[j] = min(gmin[j], lo[j]), max(gmax[j], hi[j])
-        recs += struct.pack("<IHHHBBI8fIIII", H(f"{name_prefix}_col{i}"), 0, len(verts), len(fs), 1, 1, len(faces),
+        recs += struct.pack("<IHHHBBI8fIIII", name or H(f"{name_prefix}_col{i}"), 0, len(verts), len(fs), 1, 1,
+                            len(faces),
                             *lo, 1.0, *hi, 1.0, len(fixed), len(nodes), len(inten), 0)
         for p in verts:
             fixed += struct.pack("<3H", *(int(round((p[j] - lo[j]) * 16)) for j in range(3)))
@@ -68,7 +71,7 @@ def write(tris, name_prefix="gen") -> bytes:
         for f, (ids, flags, terr) in enumerate(fs):
             faces += struct.pack("<HH3BB", flags, terr, *ids, 0)
             findex.append(f)
-    n_obj, n_verts, n_faces = len(objs), sum(len(v) for v, _ in objs), sum(len(f) for _, f in objs)
+    n_obj, n_verts, n_faces = len(objs), sum(len(o[0]) for o in objs), sum(len(o[1]) for o in objs)
     cols = max(1, min(64, math.ceil((gmax[0] - gmin[0]) / CELL)))
     rows = max(1, min(64, math.ceil((gmax[2] - gmin[2]) / CELL)))
     out = bytearray(struct.pack("<8I", 10, n_obj, n_verts, 0, n_faces, 0, n_verts, 0))

@@ -189,6 +189,22 @@ when its LEVEL_VISITED flag is set. [level_register, zone_rename, sandbox_patch]
   (Position with Z mirrored, Y rotation reversed).
   [rw, sources/thps3]
 
+### Project 8 (PS2)
+
+Project 8's PS2 version runs on THAW's engine: its areas are THAW-format zone PAKs whose textures (version 6),
+geometry, collision (with the supersector block) and node files THAW reads as they are. Its DATAP.HED offsets are
+**21-bit sector numbers, sign-extended**: entries past 2 GB of the WAD read negative; use `offset & 0x1FFFFF`.
+The areas are pieces of one streamed city, so several have no restart node. The disc still carries THAW's level
+list and a 2.5 MB leftover of THAW's Marseilles (`z_ms`). [sources/p8]
+
+### Proving Ground (PS2)
+
+Same engine and files as Project 8 (zone PAKs THAW reads as they are). Its node files use one QB value type THAW
+does not have: **raw type 26**, an inline name checksum (e.g. a ped's `profile`); it is read as a name (13).
+About half of each area's leaves store positions as **V4_32**: fixed point with 12 fraction bits, absolute (leaf
+centre words are 0), where THAW's microcode expects V4_16 relative to the centre. The city areas also use a unit
+about **12x** THAW's (collision 250-650 units across). Not supported yet. [sources/pg]
+
 ### THUG Pro custom levels (PC)
 
 Downloads (e.g. thpsgoat.com) hold `<scene>.level.json` (hand-written JSON, trailing commas) and PRE archives

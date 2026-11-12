@@ -8,8 +8,8 @@ data is included in this project.
 
 ## Features
 
-- **Levels from five games**: Underground 2, Underground, Pro Skater 4, Pro Skater 3 and Disney's Extreme Skate
-  Adventure, added to THAW's
+- **Levels from six games**: Project 8, Underground 2, Underground, Pro Skater 4, Pro Skater 3 and Disney's
+  Extreme Skate Adventure, added to THAW's
   High Score / Free Skate level list with their textures, collision, rails and start points
 - **Pick what you want**: whole games or single levels; a level remade by a newer game (e.g. THPS3's Airport in
   THUG2) is added once, from the newest version
@@ -25,7 +25,7 @@ data is included in this project.
 
 You need your THAW disc (NTSC-U, `.iso` or `.chd`) plus the discs you want levels from:
 THUG2 (SLUS-20965), THUG (SLUS-20731), THPS4 (SLUS-20504), THPS3 (SLUS-20013), Disney's Extreme Skate
-Adventure (SLUS-20607).
+Adventure (SLUS-20607), Project 8 (SLUS-21444).
 `.chd` files need MAME's `chdman` installed; `.iso` files work as they are.
 
 **Linux**: download `thaw-super-dx-linux-x86_64` from [Releases](../../releases), make it executable and run it:
@@ -43,6 +43,7 @@ Pick your discs (or **Scan a folder…** to find them all at once), tick the lev
 
 | Game | Levels | State |
 |---|---|---|
+| Project 8 | Suburbs, School, Inside the School, Town Center, Main Street, Concrete Park, Fun Park, Car Factory, Rio D, P8 Training | New: each area of the city as its own level |
 | Underground 2 | Training, Boston, Barcelona, Berlin, Australia, New Orleans, Skatopia, Pro Skater, The Triangle, Los Angeles, School, Philly, Downhill Jam, Canada, Airport | All load and play |
 | Underground | New Jersey, Manhattan, Tampa, San Diego, Hawaii, Vancouver, Slam City Jam, Moscow, Hotter Than Hell, Old Hangar, School II, Venice | All load and play |
 | Pro Skater 4 | College, San Francisco, Alcatraz, Kona, Shipyard, London, Zoo, Carnival, Chicago | All load and play |
@@ -64,6 +65,8 @@ Known issues:
 - Hawaii tree leaves missing, Hotter Than Hell ramps at the start, School II gym doors closed
 - Pro Skater 3: original skies not yet carried over; level objects (crates, glass, cars) don't move or break
 - Music import is untested by ear
+- Proving Ground is recognised but not supported yet (its city areas use a different scale and vertex format)
+- Project 8: rails don't work yet; areas without their own start point use a nearby pedestrian or rail spot
 
 ## For modders
 
